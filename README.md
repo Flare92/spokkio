@@ -42,7 +42,11 @@ packages/
 
 Team (multi-tenant) → User, Contact, Segment, Template, Campaign, Conversation/Message, Automation, AttributionEvent, Subscription/UsagePeriod. Vedi `apps/api/prisma/schema.prisma`.
 
-## Sviluppo locale
+## Sviluppo locale su macOS (guida completa)
+
+Per scaricare, installare e usare Spokkio in locale — incluso il collegamento a un numero WhatsApp di test reale e gratuito tramite Meta — segui **`docs/SETUP_MAC.md`**, che include anche uno script (`scripts/setup-mac.sh`) che automatizza l'installazione di Node/pnpm/Postgres/ngrok.
+
+Riassunto rapido (senza WhatsApp reale):
 
 ```bash
 pnpm install
@@ -61,6 +65,8 @@ Per testare il flusso end-to-end senza un WABA reale:
 1. Registra un team da `/onboarding` (o `POST /api/v1/auth/register`).
 2. Esegui `pnpm --filter @spokkio/api prisma:seed` — crea una connessione WhatsApp fittizia e un template già `APPROVED` (in produzione l'approvazione arriva solo via webhook Meta).
 3. Da `/contacts` aggiungi un contatto e crea un segmento; da `/campaigns` simula il costo e crea/invia la campagna.
+
+Per collegare un vero numero WhatsApp di test (gratuito, via Meta for Developers) invece del seed fittizio, usa `pnpm --filter @spokkio/api prisma:connect-whatsapp` — vedi `docs/SETUP_MAC.md` per i passaggi completi lato Meta.
 
 ## Flusso verticale Fase 1 implementato
 
