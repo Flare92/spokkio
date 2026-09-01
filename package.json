@@ -1,0 +1,23 @@
+{
+  "name": "spokkio",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Spokkio — WhatsApp-first marketing & customer engagement platform for Italian/EU SMBs",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @spokkio/api dev",
+    "dev:web": "pnpm --filter @spokkio/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "prisma"
+    ]
+  }
+}

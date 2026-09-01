@@ -1,0 +1,359 @@
+// Spokkio — core data model (Fase 1 MVP)
+// Postgres, EU region (Supabase). Multi-tenant via Team.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PlanTier {
+  STANDARD
+}
+
+enum UserRole {
+  OWNER
+  OPERATOR
+}
+
+enum MessageCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+  SERVICE
+}
+
+enum TemplateStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageDeliveryStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum AutomationTriggerType {
+  APPOINTMENT_REMINDER
+  POST_VISIT_FOLLOWUP
+  INACTIVE_CUSTOMER_WINBACK
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+// --- Tenancy -----------------------------------------------------------
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  vertical  String   @default("local_services") // Fase 1 GTM: beauty & wellness, ristorazione
+  createdAt DateTime @default(now())
+
+  users               User[]
+  contacts            Contact[]
+  segments            Segment[]
+  templates           Template[]
+  campaigns           Campaign[]
+  conversations       Conversation[]
+  automations         Automation[]
+  waConnection        WhatsAppConnection?
+  subscription        Subscription?
+  usagePeriods        UsagePeriod[]
+  appointments        Appointment[]
+
+  @@map("teams")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  team      Team     @relation(fields: [teamId], references: [id])
+  teamId    String
+  email     String   @unique
+  passwordHash String
+  role      UserRole @default(OPERATOR)
+  createdAt DateTime @default(now())
+
+  assignedConversations Conversation[] @relation("AssignedOperator")
+
+  @@index([teamId])
+  @@map("users")
+}
+
+// --- WhatsApp connection -------------------------------------------------
+
+model WhatsAppConnection {
+  id                 String   @id @default(uuid())
+  team               Team     @relation(fields: [teamId], references: [id])
+  teamId             String   @unique
+  wabaId             String   // WhatsApp Business Account ID (Meta Cloud API, direct)
+  phoneNumberId      String
+  displayPhoneNumber String
+  accessTokenEncrypted String
+  connectedAt        DateTime @default(now())
+
+  @@map("whatsapp_connections")
+}
+
+// --- CRM -----------------------------------------------------------------
+
+model Contact {
+  id          String   @id @default(uuid())
+  team        Team     @relation(fields: [teamId], references: [id])
+  teamId      String
+  phoneE164   String
+  firstName   String?
+  lastName    String?
+  email       String?
+  tags        String[] @default([])
+  lastActivityAt DateTime @default(now()) // last inbound message, purchase, or visit — drives winback trigger
+  createdAt   DateTime @default(now())
+
+  conversations Conversation[]
+  segments      SegmentContact[]
+  attributionEvents AttributionEvent[]
+  appointments  Appointment[]
+
+  @@unique([teamId, phoneE164])
+  @@index([teamId])
+  @@map("contacts")
+}
+
+model Segment {
+  id        String   @id @default(uuid())
+  team      Team     @relation(fields: [teamId], references: [id])
+  teamId    String
+  name      String
+  matchTags String[]
+  matchMode String   @default("ANY") // ANY | ALL — inspectable rule, no black-box ML segmentation in MVP
+  createdAt DateTime @default(now())
+
+  contacts  SegmentContact[]
+  campaigns Campaign[]
+
+  @@index([teamId])
+  @@map("segments")
+}
+
+// Materialized membership snapshot at campaign-send time, so a campaign's
+// recipient list stays auditable even if tags change afterwards.
+model SegmentContact {
+  segment   Segment @relation(fields: [segmentId], references: [id])
+  segmentId String
+  contact   Contact @relation(fields: [contactId], references: [id])
+  contactId String
+
+  @@id([segmentId, contactId])
+  @@map("segment_contacts")
+}
+
+// --- Messaging -------------------------------------------------------------
+
+model Template {
+  id              String          @id @default(uuid())
+  team            Team            @relation(fields: [teamId], references: [id])
+  teamId          String
+  name            String
+  category        MessageCategory
+  language        String          @default("it")
+  bodyText        String
+  variables       String[]        @default([])
+  status          TemplateStatus  @default(DRAFT)
+  rejectionReason String?
+  createdAt       DateTime        @default(now())
+
+  campaigns   Campaign[]
+  automations Automation[]
+
+  @@index([teamId])
+  @@map("templates")
+}
+
+model Campaign {
+  id            String         @id @default(uuid())
+  team          Team           @relation(fields: [teamId], references: [id])
+  teamId        String
+  name          String
+  segment       Segment        @relation(fields: [segmentId], references: [id])
+  segmentId     String
+  template      Template       @relation(fields: [templateId], references: [id])
+  templateId    String
+  status        CampaignStatus @default(DRAFT)
+  scheduledAt   DateTime?
+  sentAt        DateTime?
+  // Cost estimate the user accepted before send — persisted for audit, never
+  // silently exceeded (product constraint: no shock overage).
+  acceptedCostEstimateTotal Decimal? @db.Decimal(10, 2)
+  createdAt     DateTime       @default(now())
+
+  messages Message[]
+
+  @@index([teamId])
+  @@map("campaigns")
+}
+
+model Conversation {
+  id                 String    @id @default(uuid())
+  team               Team      @relation(fields: [teamId], references: [id])
+  teamId             String
+  contact            Contact   @relation(fields: [contactId], references: [id])
+  contactId          String
+  assignedOperator   User?     @relation("AssignedOperator", fields: [assignedOperatorId], references: [id])
+  assignedOperatorId String?
+  closedAt           DateTime?
+  createdAt          DateTime  @default(now())
+
+  messages Message[]
+
+  @@index([teamId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String                @id @default(uuid())
+  conversation   Conversation          @relation(fields: [conversationId], references: [id])
+  conversationId String
+  campaign       Campaign?             @relation(fields: [campaignId], references: [id])
+  campaignId     String?
+  direction      MessageDirection
+  category       MessageCategory?      // set for outbound template sends, drives billing
+  text           String
+  waMessageId    String?               // Meta message id, for webhook status correlation
+  status         MessageDeliveryStatus @default(QUEUED)
+  createdAt      DateTime              @default(now())
+  deliveredAt    DateTime?
+  readAt         DateTime?
+  failedReason   String?
+
+  events AttributionEvent[]
+
+  @@index([conversationId])
+  @@index([campaignId])
+  @@map("messages")
+}
+
+// --- Booking (minimal, local-services vertical) ---------------------------
+
+model Appointment {
+  id        String            @id @default(uuid())
+  team      Team              @relation(fields: [teamId], references: [id])
+  teamId    String
+  contact   Contact           @relation(fields: [contactId], references: [id])
+  contactId String
+  startsAt  DateTime
+  status    AppointmentStatus @default(SCHEDULED)
+  createdAt DateTime          @default(now())
+
+  @@index([teamId])
+  @@index([startsAt])
+  @@map("appointments")
+}
+
+// --- Automations -------------------------------------------------------------
+
+model Automation {
+  id            String                @id @default(uuid())
+  team          Team                  @relation(fields: [teamId], references: [id])
+  teamId        String
+  triggerType   AutomationTriggerType
+  template      Template              @relation(fields: [templateId], references: [id])
+  templateId    String
+  offsetMinutes Int
+  enabled       Boolean               @default(true)
+  createdAt     DateTime              @default(now())
+
+  runs AutomationRun[]
+
+  @@index([teamId])
+  @@map("automations")
+}
+
+// One row per contact/reference-event a given automation has already fired
+// for — the idempotency guard that stops the scheduler from double-sending
+// a reminder if it evaluates the same due window twice.
+model AutomationRun {
+  id            String     @id @default(uuid())
+  automation    Automation @relation(fields: [automationId], references: [id])
+  automationId  String
+  contactId     String
+  referenceId   String // appointmentId, or contactId again for winback triggers
+  sentAt        DateTime   @default(now())
+
+  @@unique([automationId, referenceId])
+  @@map("automation_runs")
+}
+
+// --- Attribution / analytics ---------------------------------------------
+
+// One row per inspectable event (delivered/read/clicked/...) so every
+// aggregate stat shown in the dashboard can drill down to this table —
+// no opaque ROI numbers (product constraint).
+model AttributionEvent {
+  id        String   @id @default(uuid())
+  contact   Contact  @relation(fields: [contactId], references: [id])
+  contactId String
+  message   Message  @relation(fields: [messageId], references: [id])
+  messageId String
+  kind      String   // "delivered" | "read" | "clicked" | "failed" | ...
+  detail    String?
+  occurredAt DateTime @default(now())
+
+  @@index([contactId])
+  @@index([messageId])
+  @@map("attribution_events")
+}
+
+// --- Billing (single plan, transparent, no multi-wallet) -------------------
+
+model Subscription {
+  id                     String   @id @default(uuid())
+  team                   Team     @relation(fields: [teamId], references: [id])
+  teamId                 String   @unique
+  tier                   PlanTier @default(STANDARD)
+  monthlyFeeEur          Decimal  @db.Decimal(10, 2)
+  conversationsIncluded  Int
+  usageAlertThresholdPct Int      @default(80)
+  pendingChangeEffectiveAt DateTime? // any plan/price change requires >=7 days notice
+  pendingChangeFeeEur    Decimal? @db.Decimal(10, 2)
+  pendingChangeNotifiedAt DateTime?
+  createdAt              DateTime @default(now())
+
+  @@map("subscriptions")
+}
+
+model UsagePeriod {
+  id                   String   @id @default(uuid())
+  team                 Team     @relation(fields: [teamId], references: [id])
+  teamId               String
+  periodStart          DateTime
+  periodEnd            DateTime
+  conversationsUsed    Int      @default(0)
+  alertSentAt          DateTime?
+
+  @@unique([teamId, periodStart])
+  @@map("usage_periods")
+}
