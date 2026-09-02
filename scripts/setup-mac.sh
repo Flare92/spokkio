@@ -52,19 +52,44 @@ else
 fi
 
 # --- 4. PostgreSQL locale ------------------------------------------------------
+# postgresql@16 è "keg-only" (non viene linkato in /usr/local/bin di default),
+# quindi i suoi binari (psql, createdb, pg_isready...) vanno sempre cercati qui,
+# non solo la prima volta che lo installiamo.
+export PATH="/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
+
 if ! command -v psql &>/dev/null; then
   say "Installo PostgreSQL 16 via Homebrew"
-  brew install postgresql@16
-  brew services start postgresql@16
-  # rende disponibili i binari psql/createdb in questa sessione di shell
-  export PATH="/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
-else
-  say "PostgreSQL già presente"
-  brew services start postgresql@16 2>/dev/null || true
+  if ! brew install postgresql@16; then
+    # Su macOS meno recenti (compilazione da sorgente) capita che il passo di
+    # post-install fallisca pur avendo installato il pacchetto: senza questo
+    # fallback lo script si fermerebbe qui per via di 'set -e'.
+    warn "Il post-install di postgresql@16 ha avuto un problema, riprovo con 'brew postinstall'"
+    brew postinstall postgresql@16
+  fi
 fi
 
+say "Avvio il servizio PostgreSQL"
+brew services start postgresql@16 2>/dev/null || true
+
+say "Attendo che PostgreSQL sia pronto ad accettare connessioni"
+for i in $(seq 1 15); do
+  if pg_isready -q 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
 say "Creo il database 'spokkio' (se non esiste già)"
-createdb spokkio 2>/dev/null || warn "Il database 'spokkio' esiste già, ok."
+if ! createdb spokkio 2>/tmp/spokkio-createdb.err; then
+  if grep -q "already exists" /tmp/spokkio-createdb.err; then
+    warn "Il database 'spokkio' esiste già, ok."
+  else
+    warn "Creazione del database fallita, dettagli:"
+    cat /tmp/spokkio-createdb.err >&2
+    exit 1
+  fi
+fi
+rm -f /tmp/spokkio-createdb.err
 
 # --- 5. ngrok (serve per il webhook Meta in locale) ----------------------------
 if ! command -v ngrok &>/dev/null; then
