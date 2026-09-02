@@ -2,6 +2,8 @@
 
 Guida per scaricare, installare e usare Spokkio in locale sul tuo Mac, incluso il collegamento a un numero WhatsApp reale (di test, gratuito) tramite Meta.
 
+Per la parte Meta con tutti i link diretti (creazione app, credenziali, migrazione del tuo numero aziendale esistente, verifica azienda, token permanente, webhook) vedi la guida dedicata **`docs/META_SETUP.md`** — qui sotto trovi solo la versione sintetica per il primo test con il numero gratuito.
+
 ## 0. Cosa ti serve prima di iniziare
 
 - Un Mac con macOS (Intel o Apple Silicon, va bene entrambi)
@@ -48,8 +50,8 @@ Questa è la parte "Meta". La facciamo per gradi.
 
 ### 3.1 Crea l'app su Meta for Developers
 
-1. Vai su **developers.facebook.com** e accedi con il tuo account Facebook
-2. In alto a destra: **Le mie app → Crea app**
+1. Vai su **[developers.facebook.com/apps](https://developers.facebook.com/apps/)** e accedi con il tuo account Facebook
+2. **Crea app**
 3. Tipo di app: scegli **"Business"**
 4. Dai un nome all'app (es. "Spokkio Dev") e conferma — Meta crea in automatico anche un **Meta Business Account** gratuito se non ne hai già uno, non serve fare nulla di manuale
 5. Nella dashboard dell'app, cerca il prodotto **WhatsApp** nella lista e clicca **Configura**
@@ -130,7 +132,7 @@ Poi:
 
 - Puoi inviare solo verso i numeri che hai registrato come destinatari (max 5)
 - Il numero di test **non è tuo** — non puoi usarlo con clienti veri, serve solo per sviluppo
-- Quando sarai pronto a lanciare con clienti reali, dovrai aggiungere un numero di telefono tuo (non attivo su WhatsApp consumer/Business App) nella stessa app Meta, e in genere passare per la verifica dell'azienda ("Business verification") per alzare i limiti di invio — è un passaggio successivo, non serve per i test in locale
+- Quando sarai pronto a lanciare con clienti reali, dovrai collegare il tuo numero aziendale (nuovo, oppure quello già usato su WhatsApp Business App tramite migrazione) e in genere passare per la verifica dell'azienda per alzare i limiti di invio — passaggi dettagliati con tutti i link in **`docs/META_SETUP.md`** (sezioni 4 e 5), non servono per i test in locale
 
 ## Problemi comuni
 

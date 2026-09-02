@@ -44,7 +44,7 @@ Team (multi-tenant) → User, Contact, Segment, Template, Campaign, Conversation
 
 ## Sviluppo locale su macOS (guida completa)
 
-Per scaricare, installare e usare Spokkio in locale — incluso il collegamento a un numero WhatsApp di test reale e gratuito tramite Meta — segui **`docs/SETUP_MAC.md`**, che include anche uno script (`scripts/setup-mac.sh`) che automatizza l'installazione di Node/pnpm/Postgres/ngrok.
+Per scaricare, installare e usare Spokkio in locale — incluso il collegamento a un numero WhatsApp di test reale e gratuito tramite Meta — segui **`docs/SETUP_MAC.md`**, che include anche uno script (`scripts/setup-mac.sh`) che automatizza l'installazione di Node/pnpm/Postgres/ngrok. Per tutti i passaggi su Meta for Developers con i link diretti (creazione app, credenziali, migrazione del numero aziendale esistente, verifica azienda, token permanente, webhook) vedi **`docs/META_SETUP.md`**.
 
 Riassunto rapido (senza WhatsApp reale):
 
