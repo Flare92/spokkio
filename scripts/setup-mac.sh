@@ -109,8 +109,13 @@ if [[ ! -f "$API_ENV" ]]; then
   cp "$ROOT_DIR/apps/api/.env.example" "$API_ENV"
   JWT_SECRET=$(openssl rand -hex 32)
   VERIFY_TOKEN=$(openssl rand -hex 16)
-  # macOS sed richiede un'estensione di backup esplicita dopo -i
-  sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=\"postgresql://localhost:5432/spokkio?schema=public\"#" "$API_ENV"
+  # macOS sed richiede un'estensione di backup esplicita dopo -i.
+  # Lo user va specificato esplicitamente: a differenza di psql/createdb
+  # (che usano libpq e deducono da soli l'utente del sistema operativo),
+  # il motore di Prisma non applica questo fallback e con initdb in modalità
+  # "trust" (nessuna password) un URL senza user si traduce in uno user vuoto
+  # e in un errore di accesso negato.
+  sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=\"postgresql://$(whoami)@localhost:5432/spokkio?schema=public\"#" "$API_ENV"
   sed -i '' "s#^JWT_SECRET=.*#JWT_SECRET=\"$JWT_SECRET\"#" "$API_ENV"
   sed -i '' "s#^WHATSAPP_WEBHOOK_VERIFY_TOKEN=.*#WHATSAPP_WEBHOOK_VERIFY_TOKEN=\"$VERIFY_TOKEN\"#" "$API_ENV"
   say "Generati JWT_SECRET e WHATSAPP_WEBHOOK_VERIFY_TOKEN casuali in apps/api/.env"
