@@ -9,7 +9,8 @@
 #  2. Avvia Postgres locale e crea il database "spokkio"
 #  3. Crea apps/api/.env e apps/web/.env.local dai rispettivi .env.example
 #     (chiede solo il minimo indispensabile: JWT secret generato in automatico)
-#  4. Installa le dipendenze del monorepo e genera il client Prisma
+#  4. Installa le dipendenze del monorepo, compila @spokkio/shared e genera
+#     il client Prisma
 #  5. Applica le migrazioni al database
 #
 # Non tocca le credenziali Meta: quelle le inserisci tu a mano in
@@ -134,6 +135,12 @@ fi
 say "Installo le dipendenze del monorepo (pnpm install)"
 cd "$ROOT_DIR"
 pnpm install
+
+say "Compilo il pacchetto condiviso @spokkio/shared"
+# apps/api e apps/web lo consumano dalla build compilata (dist/), non dai
+# sorgenti .ts direttamente — necessario anche dopo ogni modifica al codice
+# in packages/shared, altrimenti l'API può fallire ad avviarsi.
+pnpm --filter @spokkio/shared build
 
 say "Genero il client Prisma"
 pnpm --filter @spokkio/api exec prisma generate

@@ -6,6 +6,10 @@
 - **Nessun rate limiting / CAPTCHA su `/auth/register` e `/auth/login`.** Necessario prima dell'esposizione pubblica.
 - **Multi-WABA non gestito nel webhook.** `WebhookIngestService.handleInboundMessage` assume un solo WABA per l'intera installazione (matcha il contatto solo per numero di telefono, non per `phone_number_id`) — da correggere se un domani si servono più team con numeri diversi sullo stesso deployment.
 
+## Developer experience
+
+- **`packages/shared` non ha una modalità watch.** Va ricompilato a mano (`pnpm --filter @spokkio/shared build`) dopo ogni modifica, altrimenti l'API e il web continuano a usare la build precedente. Preso da un bug reale: puntare `main`/`types` direttamente ai sorgenti `.ts` (senza build) mandava in crash l'API su Node 24, il cui supporto nativo a TypeScript richiede estensioni esplicite negli import relativi che il codice non aveva — ora `packages/shared` viene sempre consumato dalla build compilata in `dist/`. Da valutare per Fase 2: un watcher (`tsc -w`) o Turborepo per non doverlo ricordare manualmente.
+
 ## Correttezza funzionale
 
 - **Import contatti solo riga-per-riga dalla UI.** Il tool `contacts.import` accetta CSV/Google Sheets nello schema, ma il parsing file reale (upload CSV, OAuth Google Sheets) non è implementato in `apps/web` — oggi si può solo aggiungere un contatto alla volta dalla dashboard.

@@ -50,6 +50,7 @@ Riassunto rapido (senza WhatsApp reale):
 
 ```bash
 pnpm install
+pnpm --filter @spokkio/shared build       # apps/api e apps/web consumano @spokkio/shared già compilato, non i .ts sorgente
 cp apps/api/.env.example apps/api/.env   # configura DATABASE_URL (Postgres) e JWT_SECRET
 cp apps/web/.env.example apps/web/.env.local
 
@@ -60,6 +61,8 @@ pnpm dev                                  # API su :3001
 # in un altro terminale
 pnpm --filter @spokkio/web dev            # Web su :3000
 ```
+
+Nota: se modifichi codice dentro `packages/shared`, ricordati di ricompilarlo (`pnpm --filter @spokkio/shared build`) prima di riavviare l'API — non c'è ancora una modalità watch automatica per questo pacchetto (vedi `docs/RISKS.md`).
 
 Per testare il flusso end-to-end senza un WABA reale:
 1. Registra un team da `/onboarding` (o `POST /api/v1/auth/register`).
