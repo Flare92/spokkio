@@ -26,6 +26,8 @@ Guida solo per la parte Meta (creazione app, credenziali, numero di test, migraz
 - Sempre nella pagina "API Setup", sezione **"To"** → **Manage phone number list**
 - Aggiungi il tuo numero WhatsApp personale, verifica via OTP — ora puoi ricevere messaggi di test
 
+> **Per un primo test basta quanto fatto finora (punti 1-3) più il punto 8 qui sotto.** I punti 4-7 (numero aziendale reale, verifica azienda, token permanente, webhook) servono solo più avanti, non per il primo invio di prova.
+
 ## 4. (Quando sarai pronto) Collega il tuo numero aziendale esistente
 
 Questo è il passaggio che sposta il numero che usi già su WhatsApp Business App verso la Cloud API — fallo solo dopo aver validato tutto con il numero di test (vedi la nostra chat precedente sui rischi).
@@ -62,13 +64,23 @@ Il token temporaneo dura 24 ore — per uso continuativo serve un token da un Sy
 - Iscriviti almeno ai campi `messages` e `message_template_status_update`
 - ngrok: **[ngrok.com](https://ngrok.com/)** → scarica e, per un authtoken permanente, **[dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)**
 
-## 8. Collega tutto a Spokkio
+## 8. Collega tutto a Spokkio e invia il primo messaggio di test
 
-Una volta ottenuti WABA ID, Phone number ID, numero e access token (di test o permanente):
+Una volta ottenuti WABA ID, Phone number ID, numero e access token (quelli di test del punto 2 vanno benissimo), con l'API e il web già avviati (`pnpm --filter @spokkio/api dev` e `pnpm --filter @spokkio/web dev`) apri un terzo terminale nella cartella del progetto:
 
 ```bash
 pnpm --filter @spokkio/api prisma:connect-whatsapp
 ```
+
+Ti chiede quale team collegare (quello creato da `/onboarding`) e i 4 valori del punto 2. Salva la connessione.
+
+**Poi**, per evitare di aspettare l'approvazione di un template personalizzato (può richiedere da minuti a ore): ogni numero di test Meta ha già pronto un template pre-approvato chiamato `hello_world`. Questo comando lo registra in Spokkio già come approvato:
+
+```bash
+pnpm --filter @spokkio/api prisma:quick-test-template
+```
+
+A questo punto da `/campaigns` puoi selezionare il template `hello_world` (già in stato APPROVED) per una campagna verso il segmento con il tuo numero di test destinatario, simulare il costo, creare la campagna e inviarla — dovresti ricevere il messaggio reale sul tuo WhatsApp nel giro di pochi secondi.
 
 ## Riferimenti rapidi
 

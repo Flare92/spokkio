@@ -10,6 +10,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "ts-node prisma/seed.ts",
     "prisma:connect-whatsapp": "ts-node prisma/connect-whatsapp.ts",
+    "prisma:quick-test-template": "ts-node prisma/quick-test-template.ts",
     "test": "jest"
   },
   "dependencies": {
