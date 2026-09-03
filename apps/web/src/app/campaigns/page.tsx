@@ -71,13 +71,21 @@ export default function CampaignsPage() {
   }
 
   async function handleEstimate() {
-    if (!segmentId) return;
+    if (!segmentId || !templateId) return;
     setError(null);
     try {
+      // La stima deve usare la categoria del template selezionato: Meta fattura
+      // per categoria (MARKETING, UTILITY, ...) con tariffe diverse, e l'invio
+      // ricalcola il costo sulla categoria reale del template della campagna —
+      // usare qui una categoria diversa da quella effettiva fa fallire l'invio
+      // per mismatch tra costo mostrato e costo accettato.
+      const selectedTemplate = templates.find((t) => t.id === templateId);
+      if (!selectedTemplate) return;
+
       const result = await callTool<CostEstimateOutput>("/campaigns/estimate-cost", {
         teamId,
         segmentId,
-        templateCategory: "MARKETING",
+        templateCategory: selectedTemplate.category,
       });
       setEstimate(result);
     } catch (err) {
@@ -183,7 +191,10 @@ export default function CampaignsPage() {
             <select
               required
               value={templateId}
-              onChange={(e) => setTemplateId(e.target.value)}
+              onChange={(e) => {
+                setTemplateId(e.target.value);
+                setEstimate(null);
+              }}
               className="w-full rounded border px-3 py-2 text-sm"
             >
               <option value="">Seleziona template</option>
@@ -191,12 +202,17 @@ export default function CampaignsPage() {
                 .filter((t) => t.status === "APPROVED")
                 .map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.name}
+                    {t.name} ({t.category})
                   </option>
                 ))}
             </select>
 
-            <button type="button" onClick={handleEstimate} className="rounded border px-4 py-2 text-sm">
+            <button
+              type="button"
+              onClick={handleEstimate}
+              disabled={!segmentId || !templateId}
+              className="rounded border px-4 py-2 text-sm disabled:opacity-40"
+            >
               Simula costo
             </button>
 
