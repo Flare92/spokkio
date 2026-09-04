@@ -1,5 +1,11 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { ImportContactsInput, TagContactsInput, CreateSegmentInput, ListSegmentsInput } from "@spokkio/shared";
+import {
+  ImportContactsInput,
+  TagContactsInput,
+  CreateSegmentInput,
+  ListSegmentsInput,
+  ListContactsInput,
+} from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -22,6 +28,12 @@ export class ContactsController {
   @Post("tag")
   tag(@Body(new ZodValidationPipe(TagContactsInput)) body: TagContactsInput) {
     return this.contacts.tagContacts(body);
+  }
+
+  // tool: contacts.list
+  @Post("list")
+  list(@Body(new ZodValidationPipe(ListContactsInput)) body: ListContactsInput) {
+    return this.contacts.listContacts(body);
   }
 
   // tool: contacts.createSegment

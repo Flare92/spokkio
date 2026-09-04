@@ -130,6 +130,9 @@ model Contact {
   lastName    String?
   email       String?
   tags        String[] @default([])
+  // Colonne arbitrarie importate da CSV/Excel (es. "citta", "ultimo_acquisto"):
+  // diventano variabili utilizzabili nei template delle campagne.
+  customFields Json    @default("{}")
   lastActivityAt DateTime @default(now()) // last inbound message, purchase, or visit — drives winback trigger
   createdAt   DateTime @default(now())
 
@@ -205,6 +208,10 @@ model Campaign {
   status        CampaignStatus @default(DRAFT)
   scheduledAt   DateTime?
   sentAt        DateTime?
+  // Mappa ogni variabile del template ({{1}}, {{2}}, ...) a un campo del
+  // contatto: es. ["firstName", "custom.citta"]. Il testo viene reso per
+  // singolo destinatario al momento dell'invio.
+  variableMapping Json         @default("[]")
   // Cost estimate the user accepted before send — persisted for audit, never
   // silently exceeded (product constraint: no shock overage).
   acceptedCostEstimateTotal Decimal? @db.Decimal(10, 2)

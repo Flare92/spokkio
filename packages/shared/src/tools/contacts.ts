@@ -7,7 +7,10 @@ import { z } from "zod";
 
 export const ImportContactsInput = z.object({
   teamId: z.string().uuid(),
-  source: z.enum(["CSV", "GOOGLE_SHEETS"]),
+  source: z.enum(["CSV", "XLSX", "GOOGLE_SHEETS", "MANUAL"]),
+  // Se true, un contatto già presente viene aggiornato con i dati della riga
+  // invece di essere semplicemente saltato.
+  updateExisting: z.boolean().default(false),
   rows: z
     .array(
       z.object({
@@ -16,6 +19,8 @@ export const ImportContactsInput = z.object({
         lastName: z.string().optional(),
         email: z.string().email().optional(),
         tags: z.array(z.string()).default([]),
+        // Colonne extra del file, disponibili poi come variabili nei template.
+        customFields: z.record(z.string()).default({}),
       }),
     )
     .min(1),
@@ -24,6 +29,7 @@ export type ImportContactsInput = z.infer<typeof ImportContactsInput>;
 
 export const ImportContactsOutput = z.object({
   imported: z.number().int(),
+  updated: z.number().int(),
   skippedDuplicates: z.number().int(),
   invalidRows: z.array(z.object({ row: z.number().int(), reason: z.string() })),
 });
@@ -58,9 +64,40 @@ export type SegmentOutput = z.infer<typeof SegmentOutput>;
 export const ListSegmentsInput = z.object({ teamId: z.string().uuid() });
 export type ListSegmentsInput = z.infer<typeof ListSegmentsInput>;
 
+export const ListContactsInput = z.object({
+  teamId: z.string().uuid(),
+  search: z.string().optional(),
+  tag: z.string().optional(),
+  limit: z.number().int().min(1).max(500).default(100),
+});
+export type ListContactsInput = z.infer<typeof ListContactsInput>;
+
+export const ContactOutput = z.object({
+  id: z.string().uuid(),
+  phoneE164: z.string(),
+  firstName: z.string().nullable(),
+  lastName: z.string().nullable(),
+  email: z.string().nullable(),
+  tags: z.array(z.string()),
+  customFields: z.record(z.string()),
+  createdAt: z.string().datetime(),
+});
+export type ContactOutput = z.infer<typeof ContactOutput>;
+
+export const ListContactsOutput = z.object({
+  contacts: z.array(ContactOutput),
+  total: z.number().int(),
+  // Tutte le chiavi di campi custom presenti nel team: servono a popolare
+  // l'elenco delle variabili disponibili quando si costruisce una campagna.
+  availableCustomFields: z.array(z.string()),
+  availableTags: z.array(z.string()),
+});
+export type ListContactsOutput = z.infer<typeof ListContactsOutput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
+  "contacts.list": { input: ListContactsInput, output: ListContactsOutput },
   "contacts.createSegment": { input: CreateSegmentInput, output: SegmentOutput },
   "contacts.listSegments": { input: ListSegmentsInput, output: z.array(SegmentOutput) },
 } as const;

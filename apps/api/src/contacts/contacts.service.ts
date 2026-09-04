@@ -5,6 +5,8 @@ import type {
   TagContactsInput,
   CreateSegmentInput,
   SegmentOutput,
+  ListContactsInput,
+  ListContactsOutput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -15,6 +17,7 @@ export class ContactsService {
   // Tool: contacts.import
   async importContacts(input: ImportContactsInput): Promise<ImportContactsOutput> {
     let imported = 0;
+    let updated = 0;
     let skippedDuplicates = 0;
     const invalidRows: { row: number; reason: string }[] = [];
 
@@ -23,10 +26,32 @@ export class ContactsService {
         const existing = await this.prisma.contact.findUnique({
           where: { teamId_phoneE164: { teamId: input.teamId, phoneE164: row.phoneE164 } },
         });
+
         if (existing) {
-          skippedDuplicates++;
+          if (!input.updateExisting) {
+            skippedDuplicates++;
+            continue;
+          }
+          // I campi custom vengono fusi con quelli già presenti, così un file
+          // che porta solo alcune colonne non cancella le altre.
+          const mergedCustomFields = {
+            ...((existing.customFields as Record<string, string>) ?? {}),
+            ...row.customFields,
+          };
+          await this.prisma.contact.update({
+            where: { id: existing.id },
+            data: {
+              firstName: row.firstName ?? existing.firstName,
+              lastName: row.lastName ?? existing.lastName,
+              email: row.email ?? existing.email,
+              tags: Array.from(new Set([...existing.tags, ...row.tags])),
+              customFields: mergedCustomFields,
+            },
+          });
+          updated++;
           continue;
         }
+
         await this.prisma.contact.create({
           data: {
             teamId: input.teamId,
@@ -35,6 +60,7 @@ export class ContactsService {
             lastName: row.lastName,
             email: row.email,
             tags: row.tags,
+            customFields: row.customFields,
           },
         });
         imported++;
@@ -43,7 +69,62 @@ export class ContactsService {
       }
     }
 
-    return { imported, skippedDuplicates, invalidRows };
+    return { imported, updated, skippedDuplicates, invalidRows };
+  }
+
+  // Tool: contacts.list
+  async listContacts(input: ListContactsInput): Promise<ListContactsOutput> {
+    const where = {
+      teamId: input.teamId,
+      ...(input.tag ? { tags: { has: input.tag } } : {}),
+      ...(input.search
+        ? {
+            OR: [
+              { phoneE164: { contains: input.search, mode: "insensitive" as const } },
+              { firstName: { contains: input.search, mode: "insensitive" as const } },
+              { lastName: { contains: input.search, mode: "insensitive" as const } },
+              { email: { contains: input.search, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [contacts, total, allForFacets] = await Promise.all([
+      this.prisma.contact.findMany({ where, orderBy: { createdAt: "desc" }, take: input.limit }),
+      this.prisma.contact.count({ where }),
+      // Le liste di tag e campi custom disponibili si ricavano da tutti i
+      // contatti del team, non solo da quelli filtrati: servono a costruire le
+      // campagne, non a descrivere il filtro corrente.
+      this.prisma.contact.findMany({
+        where: { teamId: input.teamId },
+        select: { tags: true, customFields: true },
+      }),
+    ]);
+
+    const customFieldKeys = new Set<string>();
+    const tagValues = new Set<string>();
+    for (const c of allForFacets) {
+      for (const t of c.tags) tagValues.add(t);
+      for (const key of Object.keys((c.customFields as Record<string, string>) ?? {})) {
+        customFieldKeys.add(key);
+      }
+    }
+
+    return {
+      contacts: contacts.map((c) => ({
+        id: c.id,
+        phoneE164: c.phoneE164,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        email: c.email,
+        tags: c.tags,
+        customFields: (c.customFields as Record<string, string>) ?? {},
+        createdAt: c.createdAt.toISOString(),
+      })),
+      total,
+      availableCustomFields: Array.from(customFieldKeys).sort(),
+      availableTags: Array.from(tagValues).sort(),
+    };
   }
 
   // Tool: contacts.tag
