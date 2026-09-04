@@ -51,7 +51,10 @@ fi
 # Lo schema viene sincronizzato con "db push" invece che con le migrazioni:
 # aggiunge le colonne nuove preservando i dati già presenti in locale.
 cd "$ROOT_DIR"
-log "Allineo pacchetto condiviso e schema del database..."
+log "Allineo dipendenze, pacchetto condiviso e schema del database..."
+# Se un aggiornamento ha introdotto librerie nuove vanno installate prima di
+# compilare, altrimenti la build fallisce su un modulo mancante.
+pnpm install >>"$LOG_FILE" 2>&1
 pnpm --filter @spokkio/shared build >>"$LOG_FILE" 2>&1
 pnpm --filter @spokkio/api exec prisma generate >>"$LOG_FILE" 2>&1
 pnpm --filter @spokkio/api exec prisma db push --skip-generate >>"$LOG_FILE" 2>&1

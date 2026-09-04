@@ -17,6 +17,10 @@ APP_DIR="$HOME/Applications/Spokkio.app"
 
 say "Compilo Spokkio per l'uso in locale (può richiedere qualche minuto)"
 cd "$ROOT_DIR"
+# Un aggiornamento del progetto può portare librerie nuove: senza questo
+# passaggio la compilazione fallisce con "Module not found" su una dipendenza
+# che è nel package.json ma non ancora installata in locale.
+pnpm install
 pnpm --filter @spokkio/shared build
 pnpm --filter @spokkio/api exec prisma generate
 pnpm --filter @spokkio/api build
