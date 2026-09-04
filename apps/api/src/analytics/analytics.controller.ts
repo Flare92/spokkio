@@ -1,5 +1,5 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { CampaignStatsInput, CampaignEventDrilldownInput } from "@spokkio/shared";
+import { CampaignStatsInput, CampaignEventDrilldownInput, AnalyticsRangeInput } from "@spokkio/shared";
 import { AnalyticsService } from "./analytics.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -20,5 +20,23 @@ export class AnalyticsController {
   @Post("campaign-event-drilldown")
   drilldown(@Body(new ZodValidationPipe(CampaignEventDrilldownInput)) body: CampaignEventDrilldownInput) {
     return this.analytics.campaignEventDrilldown(body);
+  }
+
+  // tool: analytics.overview
+  @Post("overview")
+  overview(@Body(new ZodValidationPipe(AnalyticsRangeInput)) body: AnalyticsRangeInput) {
+    return this.analytics.overview(body);
+  }
+
+  // tool: analytics.timeSeries
+  @Post("time-series")
+  timeSeries(@Body(new ZodValidationPipe(AnalyticsRangeInput)) body: AnalyticsRangeInput) {
+    return this.analytics.timeSeries(body);
+  }
+
+  // tool: analytics.campaignPerformance
+  @Post("campaign-performance")
+  campaignPerformance(@Body(new ZodValidationPipe(AnalyticsRangeInput)) body: AnalyticsRangeInput) {
+    return this.analytics.campaignPerformance(body);
   }
 }
