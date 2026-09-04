@@ -28,6 +28,8 @@ export class TemplatesService {
       name: template.name,
       category: template.category,
       status: template.status,
+      language: template.language,
+      bodyText: template.bodyText,
       rejectionReason: template.rejectionReason,
     };
   }
@@ -43,6 +45,8 @@ export class TemplatesService {
       name: t.name,
       category: t.category,
       status: t.status,
+      language: t.language,
+      bodyText: t.bodyText,
       rejectionReason: t.rejectionReason,
     }));
   }

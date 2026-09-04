@@ -16,6 +16,10 @@ export const TemplateOutput = z.object({
   name: z.string(),
   category: z.enum(MessageCategoryValues),
   status: z.enum(TemplateStatusValues),
+  language: z.string(),
+  // Serve al costruttore di campagne per capire quante variabili ({{1}},
+  // {{2}}, ...) vanno mappate e per mostrare l'anteprima del testo.
+  bodyText: z.string(),
   rejectionReason: z.string().nullable(),
 });
 export type TemplateOutput = z.infer<typeof TemplateOutput>;
