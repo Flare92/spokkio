@@ -12,7 +12,9 @@
 
 ## Correttezza funzionale
 
-- **Import contatti solo riga-per-riga dalla UI.** Il tool `contacts.import` accetta CSV/Google Sheets nello schema, ma il parsing file reale (upload CSV, OAuth Google Sheets) non è implementato in `apps/web` — oggi si può solo aggiungere un contatto alla volta dalla dashboard.
+- **Import Google Sheets non implementato.** CSV ed Excel si importano da file nella UI; l'import diretto da Google Sheets (OAuth) è ancora solo nello schema del tool.
+- **Costi stimati, non fatturati.** I totali in analytics moltiplicano i messaggi partiti per la tariffa di categoria: Meta però fattura per *conversazione* (finestra 24h), quindi su più messaggi allo stesso contatto nella stessa finestra il totale reale è più basso. Va allineato leggendo i costi dalle API di fatturazione di Meta prima di mostrarli come dato contabile a un cliente.
+- **Click non tracciati automaticamente.** La metrica "click" legge gli eventi di attribution, ma nulla li genera ancora: serve il pixel di sito o i link tracciati previsti in roadmap.
 - **Onboarding "wizard con AI conversazionale"** richiesto dal documento di prodotto non è implementato: l'onboarding attuale è un form guidato in 2 passi, senza assistente conversazionale. È il gap più visibile rispetto alla visione §7.3 del master prompt.
 - **Integrazione Shopify/WooCommerce/Google Sheets/Zapier** (richiesta in Fase 1) non ancora costruita — nessun modulo dedicato esiste ancora.
 - **Rate card Meta hardcoded** in `apps/api/src/campaigns/pricing.ts` — va sincronizzata periodicamente con il listino ufficiale Meta (cambia nel tempo) o resa configurabile da un pannello admin.

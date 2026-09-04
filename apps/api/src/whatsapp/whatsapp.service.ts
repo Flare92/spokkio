@@ -138,6 +138,28 @@ export class WhatsAppService {
     return { waMessageId };
   }
 
+  // Verifica che le credenziali salvate funzionino davvero, interrogando il
+  // numero su Meta. Serve soprattutto per i token temporanei da 24 ore, che
+  // scadono in silenzio: senza questo controllo l'utente scoprirebbe il
+  // problema solo quando una campagna fallisce.
+  async verifyCredentials(params: {
+    phoneNumberId: string;
+    accessToken: string;
+  }): Promise<{ valid: boolean; error?: string }> {
+    try {
+      const response = await fetch(`${GRAPH_BASE_URL}/${params.phoneNumberId}`, {
+        headers: { Authorization: `Bearer ${params.accessToken}` },
+      });
+      const json = (await response.json()) as { error?: { message: string } };
+      if (!response.ok || json.error) {
+        return { valid: false, error: json.error?.message ?? `HTTP ${response.status}` };
+      }
+      return { valid: true };
+    } catch (err) {
+      return { valid: false, error: err instanceof Error ? err.message : "errore di rete" };
+    }
+  }
+
   // Parses Meta's status-callback webhook payload into a normalized shape.
   // Handles the "message delivery" statuses; template category rejections
   // arrive on a separate `message_template_status_update` field.

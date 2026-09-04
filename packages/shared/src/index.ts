@@ -6,4 +6,5 @@ export * from "./tools/inbox";
 export * from "./tools/automations";
 export * from "./tools/analytics";
 export * from "./tools/billing";
+export * from "./tools/whatsapp";
 export * from "./tools/registry";

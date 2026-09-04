@@ -5,6 +5,7 @@ import { INBOX_TOOLS } from "./inbox";
 import { AUTOMATIONS_TOOLS } from "./automations";
 import { ANALYTICS_TOOLS } from "./analytics";
 import { BILLING_TOOLS } from "./billing";
+import { WHATSAPP_TOOLS } from "./whatsapp";
 
 // Single registry of every business action in the platform, each with a
 // zod input/output schema. The REST API binds to these tool definitions
@@ -18,6 +19,7 @@ export const TOOL_REGISTRY = {
   ...AUTOMATIONS_TOOLS,
   ...ANALYTICS_TOOLS,
   ...BILLING_TOOLS,
+  ...WHATSAPP_TOOLS,
 } as const;
 
 export type ToolName = keyof typeof TOOL_REGISTRY;

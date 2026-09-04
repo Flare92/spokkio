@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/campaigns", label: "Campagne" },
   { href: "/inbox", label: "Inbox" },
   { href: "/analytics", label: "Analytics" },
+  { href: "/settings", label: "Impostazioni" },
 ];
 
 export function Nav() {
