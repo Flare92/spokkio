@@ -18,10 +18,22 @@ log() { printf "[%s] %s\n" "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG_FILE"; }
 # un'app avviata dal Finder, che non carica il profilo della shell.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
 
+# "pnpm exec next start" avvia a sua volta un processo figlio: fermare solo il
+# processo che abbiamo lanciato lascerebbe in vita il vero server, che
+# continuerebbe a occupare la porta al prossimo avvio.
+kill_tree() {
+  local pid="$1"
+  [[ -z "$pid" ]] && return 0
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$child"
+  done
+  kill "$pid" 2>/dev/null
+}
+
 cleanup() {
   log "Arresto Spokkio..."
-  [[ -n "${API_PID:-}" ]] && kill "$API_PID" 2>/dev/null
-  [[ -n "${WEB_PID:-}" ]] && kill "$WEB_PID" 2>/dev/null
+  kill_tree "${API_PID:-}"
+  kill_tree "${WEB_PID:-}"
   wait 2>/dev/null
   log "Spokkio arrestato."
 }
@@ -73,19 +85,46 @@ if [[ ! -d "$ROOT_DIR/apps/web/.next" ]] || \
 fi
 
 # --- Porte già occupate ------------------------------------------------------
-# Un processo rimasto attivo da una sessione precedente (tipicamente un
-# "pnpm dev" con la versione vecchia del codice) continua a rispondere sulla
-# porta: l'interfaccia nuova finirebbe a parlare con un'API vecchia, con
-# errori incomprensibili a schermo. Meglio dirlo subito e chiaramente.
-for port in 3001 3000; do
-  occupant="$(lsof -ti "tcp:$port" 2>/dev/null | head -1)"
-  if [[ -n "$occupant" ]]; then
-    process_name="$(ps -p "$occupant" -o comm= 2>/dev/null)"
-    log "ERRORE: la porta $port è già usata dal processo $occupant ($process_name)"
-    osascript -e "display alert \"Spokkio\" message \"La porta $port è già occupata da un altro processo (PID $occupant). Probabilmente è rimasto aperto un avvio precedente dal terminale: chiudilo con Ctrl+C, poi riapri Spokkio.\"" 2>/dev/null
-    exit 1
-  fi
-done
+# Un avvio precedente può lasciare i suoi processi in vita: chiudere il
+# terminale non li uccide, e se l'app viene forzata a chiudersi il codice di
+# pulizia non fa in tempo a girare. Se ciò che occupa la porta è una vecchia
+# istanza di Spokkio la recuperiamo da soli (è l'unico comportamento sensato
+# per un'app che si riapre con un doppio click); se invece è un programma di
+# qualcun altro ci fermiamo e lo diciamo, senza spegnere roba non nostra.
+free_port() {
+  local port="$1"
+  local pids
+  pids="$(lsof -ti "tcp:$port" 2>/dev/null)"
+  [[ -z "$pids" ]] && return 0
+
+  for pid in $pids; do
+    local command_line
+    command_line="$(ps -p "$pid" -o command= 2>/dev/null)"
+
+    if [[ "$command_line" == *"$ROOT_DIR"* || "$command_line" == *"dist/main.js"* || "$command_line" == *"next start"* || "$command_line" == *"next-server"* ]]; then
+      log "Trovata una vecchia istanza di Spokkio sulla porta $port (PID $pid): la chiudo."
+      kill "$pid" 2>/dev/null
+      for _ in $(seq 1 10); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.5
+      done
+      kill -9 "$pid" 2>/dev/null
+    else
+      log "ERRORE: la porta $port è usata da un altro programma (PID $pid): $command_line"
+      osascript -e "display alert \"Spokkio\" message \"La porta $port è occupata da un altro programma (PID $pid). Chiudilo e riapri Spokkio.\"" 2>/dev/null
+      exit 1
+    fi
+  done
+
+  # Il rilascio della porta non è immediato dopo la chiusura del processo.
+  for _ in $(seq 1 10); do
+    [[ -z "$(lsof -ti "tcp:$port" 2>/dev/null)" ]] && return 0
+    sleep 0.5
+  done
+}
+
+free_port 3001
+free_port 3000
 
 # --- API --------------------------------------------------------------------
 log "Avvio API su :3001"
