@@ -72,6 +72,21 @@ if [[ ! -d "$ROOT_DIR/apps/web/.next" ]] || \
   pnpm --filter @spokkio/web build >>"$LOG_FILE" 2>&1
 fi
 
+# --- Porte già occupate ------------------------------------------------------
+# Un processo rimasto attivo da una sessione precedente (tipicamente un
+# "pnpm dev" con la versione vecchia del codice) continua a rispondere sulla
+# porta: l'interfaccia nuova finirebbe a parlare con un'API vecchia, con
+# errori incomprensibili a schermo. Meglio dirlo subito e chiaramente.
+for port in 3001 3000; do
+  occupant="$(lsof -ti "tcp:$port" 2>/dev/null | head -1)"
+  if [[ -n "$occupant" ]]; then
+    process_name="$(ps -p "$occupant" -o comm= 2>/dev/null)"
+    log "ERRORE: la porta $port è già usata dal processo $occupant ($process_name)"
+    osascript -e "display alert \"Spokkio\" message \"La porta $port è già occupata da un altro processo (PID $occupant). Probabilmente è rimasto aperto un avvio precedente dal terminale: chiudilo con Ctrl+C, poi riapri Spokkio.\"" 2>/dev/null
+    exit 1
+  fi
+done
+
 # --- API --------------------------------------------------------------------
 log "Avvio API su :3001"
 cd "$ROOT_DIR/apps/api"

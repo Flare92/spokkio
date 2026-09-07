@@ -78,11 +78,13 @@ export default function CampaignsPage() {
           availableCategories: { name: string; contactCount: number }[];
         }>("/contacts/list", { teamId, limit: 1 }),
       ]);
-      setCampaigns(c);
-      setSegments(s);
-      setTemplates(t);
-      setCustomFields(contacts.availableCustomFields);
-      setCategories(contacts.availableCategories);
+      // Come nella pagina contatti, gli elenchi vengono normalizzati qui:
+      // un'API più vecchia del frontend deve degradare, non far crollare la pagina.
+      setCampaigns(c ?? []);
+      setSegments(s ?? []);
+      setTemplates(t ?? []);
+      setCustomFields(contacts?.availableCustomFields ?? []);
+      setCategories(contacts?.availableCategories ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Caricamento fallito");
     }
@@ -510,7 +512,7 @@ function CampaignBuilder({
               <li key={p.contactId} className="px-3 py-2 text-sm">
                 <span className="font-mono text-xs text-gray-500">{p.phoneE164}</span>
                 <p className="mt-0.5 whitespace-pre-wrap">{p.renderedText}</p>
-                {p.missingVariables.length > 0 && (
+                {(p.missingVariables ?? []).length > 0 && (
                   <p className="mt-1 text-xs text-red-600">
                     Variabili senza valore né riserva: {p.missingVariables.join(", ")}
                   </p>

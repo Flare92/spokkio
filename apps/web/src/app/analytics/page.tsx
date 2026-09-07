@@ -83,9 +83,11 @@ export default function AnalyticsPage() {
         callTool<TimePoint[]>("/analytics/time-series", { teamId, days }),
         callTool<CampaignPerformanceRow[]>("/analytics/campaign-performance", { teamId, days }),
       ]);
-      setOverview(o);
-      setSeries(s);
-      setCampaigns(c);
+      // Normalizzati all'ingresso come nelle altre pagine: un'API più vecchia
+      // del frontend deve degradare, non far crollare la dashboard.
+      setOverview({ ...o, cost: { ...o.cost, byCategory: o.cost?.byCategory ?? [] } });
+      setSeries(s ?? []);
+      setCampaigns(c ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Caricamento analytics fallito");
     }

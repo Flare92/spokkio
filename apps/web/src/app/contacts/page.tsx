@@ -67,7 +67,22 @@ export default function ContactsPage() {
         category: categoryFilter || undefined,
         limit: 200,
       });
-      setList(result);
+      // Gli elenchi vengono normalizzati qui, all'ingresso: se l'API in
+      // esecuzione è più vecchia del frontend (capita durante un
+      // aggiornamento, con un processo rimasto attivo dalla versione
+      // precedente) un campo assente non deve far collassare la pagina.
+      setList({
+        ...result,
+        contacts: (result.contacts ?? []).map((c) => ({
+          ...c,
+          tags: c.tags ?? [],
+          categories: c.categories ?? [],
+          customFields: c.customFields ?? {},
+        })),
+        availableCustomFields: result.availableCustomFields ?? [],
+        availableTags: result.availableTags ?? [],
+        availableCategories: result.availableCategories ?? [],
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossibile caricare i contatti");
     }
@@ -76,7 +91,14 @@ export default function ContactsPage() {
   const loadSegments = useCallback(async () => {
     if (!teamId) return;
     try {
-      setSegments(await callTool<SegmentOutput[]>("/contacts/segments/list", { teamId }));
+      const result = await callTool<SegmentOutput[]>("/contacts/segments/list", { teamId });
+      setSegments(
+        (result ?? []).map((s) => ({
+          ...s,
+          matchTags: s.matchTags ?? [],
+          matchCategories: s.matchCategories ?? [],
+        })),
+      );
     } catch {
       /* la lista segmenti non è critica per questa pagina */
     }
@@ -91,7 +113,7 @@ export default function ContactsPage() {
     refreshAll();
   }, [refreshAll]);
 
-  const knownCategories = list?.availableCategories.map((c) => c.name) ?? [];
+  const knownCategories = (list?.availableCategories ?? []).map((c) => c.name);
 
   return (
     <div>
