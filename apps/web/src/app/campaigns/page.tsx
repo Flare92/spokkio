@@ -62,6 +62,7 @@ export default function CampaignsPage() {
   const [segments, setSegments] = useState<SegmentOutput[]>([]);
   const [templates, setTemplates] = useState<TemplateOutput[]>([]);
   const [customFields, setCustomFields] = useState<string[]>([]);
+  const [categories, setCategories] = useState<{ name: string; contactCount: number }[]>([]);
   const [showBuilder, setShowBuilder] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,12 +73,16 @@ export default function CampaignsPage() {
         callTool<CampaignOutput[]>("/campaigns/list", { teamId }),
         callTool<SegmentOutput[]>("/contacts/segments/list", { teamId }),
         callTool<TemplateOutput[]>("/templates/list", { teamId }),
-        callTool<{ availableCustomFields: string[] }>("/contacts/list", { teamId, limit: 1 }),
+        callTool<{
+          availableCustomFields: string[];
+          availableCategories: { name: string; contactCount: number }[];
+        }>("/contacts/list", { teamId, limit: 1 }),
       ]);
       setCampaigns(c);
       setSegments(s);
       setTemplates(t);
       setCustomFields(contacts.availableCustomFields);
+      setCategories(contacts.availableCategories);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Caricamento fallito");
     }
@@ -107,6 +112,7 @@ export default function CampaignsPage() {
             segments={segments}
             templates={templates}
             customFields={customFields}
+            categories={categories}
             onDone={() => {
               setShowBuilder(false);
               refresh();
@@ -129,15 +135,20 @@ function CampaignBuilder({
   segments,
   templates,
   customFields,
+  categories,
   onDone,
 }: {
   teamId: string | null;
   segments: SegmentOutput[];
   templates: TemplateOutput[];
   customFields: string[];
+  categories: { name: string; contactCount: number }[];
   onDone: () => void;
 }) {
   const [name, setName] = useState("");
+  const [audienceMode, setAudienceMode] = useState<"CATEGORY" | "SEGMENT">("CATEGORY");
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [resolvingCategory, setResolvingCategory] = useState(false);
   const [segmentId, setSegmentId] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [mapping, setMapping] = useState<VariableSource[]>([]);
@@ -170,6 +181,28 @@ function CampaignBuilder({
     setEstimate(null);
     setPreview(null);
   }, [variableCount, templateId]);
+
+  // Scegliere una categoria come destinatari significa, dietro le quinte,
+  // usare il segmento che corrisponde a quella categoria: così la campagna
+  // conserva comunque l'elenco esatto dei destinatari a cui è stata inviata.
+  async function handleCategoryChange(category: string) {
+    setSelectedCategory(category);
+    setEstimate(null);
+    setPreview(null);
+    setSegmentId("");
+    if (!category) return;
+
+    setResolvingCategory(true);
+    setError(null);
+    try {
+      const segment = await callTool<{ id: string }>("/contacts/categories/segment", { teamId, category });
+      setSegmentId(segment.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossibile usare questa categoria");
+    } finally {
+      setResolvingCategory(false);
+    }
+  }
 
   async function handleEstimate() {
     if (!segmentId || !selectedTemplate) return;
@@ -256,25 +289,72 @@ function CampaignBuilder({
           />
         </label>
 
-        <label className="text-sm">
-          <span className="mb-1 block text-gray-600">Destinatari (segmento)</span>
-          <select
-            value={segmentId}
-            onChange={(e) => {
-              setSegmentId(e.target.value);
-              setEstimate(null);
-              setPreview(null);
-            }}
-            className="w-full rounded border px-3 py-2 text-sm"
-          >
-            <option value="">Seleziona…</option>
-            {segments.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name} ({s.contactCount})
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="text-sm">
+          <span className="mb-1 block text-gray-600">Destinatari</span>
+          <div className="mb-2 flex gap-1 rounded border bg-gray-50 p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setAudienceMode("CATEGORY");
+                setSegmentId("");
+                setEstimate(null);
+                setPreview(null);
+              }}
+              className={`flex-1 rounded px-2 py-1 text-xs ${
+                audienceMode === "CATEGORY" ? "bg-brand-dark text-white" : "text-gray-600"
+              }`}
+            >
+              Categoria
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAudienceMode("SEGMENT");
+                setSegmentId("");
+                setEstimate(null);
+                setPreview(null);
+              }}
+              className={`flex-1 rounded px-2 py-1 text-xs ${
+                audienceMode === "SEGMENT" ? "bg-brand-dark text-white" : "text-gray-600"
+              }`}
+            >
+              Segmento
+            </button>
+          </div>
+
+          {audienceMode === "CATEGORY" ? (
+            <select
+              value={selectedCategory}
+              onChange={(e) => handleCategoryChange(e.target.value)}
+              disabled={resolvingCategory}
+              className="w-full rounded border px-3 py-2 text-sm"
+            >
+              <option value="">{categories.length === 0 ? "Nessuna categoria" : "Seleziona…"}</option>
+              {categories.map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name} ({c.contactCount})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={segmentId}
+              onChange={(e) => {
+                setSegmentId(e.target.value);
+                setEstimate(null);
+                setPreview(null);
+              }}
+              className="w-full rounded border px-3 py-2 text-sm"
+            >
+              <option value="">Seleziona…</option>
+              {segments.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.contactCount})
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
         <label className="text-sm sm:col-span-2">
           <span className="mb-1 block text-gray-600">Template approvato</span>

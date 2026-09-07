@@ -2,9 +2,11 @@ import { Body, Controller, Post, UseGuards } from "@nestjs/common";
 import {
   ImportContactsInput,
   TagContactsInput,
+  AssignCategoriesInput,
   CreateSegmentInput,
   ListSegmentsInput,
   ListContactsInput,
+  EnsureCategorySegmentInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -28,6 +30,20 @@ export class ContactsController {
   @Post("tag")
   tag(@Body(new ZodValidationPipe(TagContactsInput)) body: TagContactsInput) {
     return this.contacts.tagContacts(body);
+  }
+
+  // tool: contacts.assignCategories
+  @Post("categories/assign")
+  assignCategories(@Body(new ZodValidationPipe(AssignCategoriesInput)) body: AssignCategoriesInput) {
+    return this.contacts.assignCategories(body);
+  }
+
+  // tool: contacts.ensureCategorySegment
+  @Post("categories/segment")
+  ensureCategorySegment(
+    @Body(new ZodValidationPipe(EnsureCategorySegmentInput)) body: EnsureCategorySegmentInput,
+  ) {
+    return this.contacts.ensureCategorySegment(body);
   }
 
   // tool: contacts.list

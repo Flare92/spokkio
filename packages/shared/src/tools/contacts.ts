@@ -19,6 +19,9 @@ export const ImportContactsInput = z.object({
         lastName: z.string().optional(),
         email: z.string().email().optional(),
         tags: z.array(z.string()).default([]),
+        // Raggruppamento proposto come destinatario quando si crea una
+        // campagna: assegnabile per riga, su una selezione o su tutto il file.
+        categories: z.array(z.string()).default([]),
         // Colonne extra del file, disponibili poi come variabili nei template.
         customFields: z.record(z.string()).default({}),
       }),
@@ -43,19 +46,36 @@ export const TagContactsInput = z.object({
 });
 export type TagContactsInput = z.infer<typeof TagContactsInput>;
 
-export const CreateSegmentInput = z.object({
+// Assegna o toglie categorie a contatti già salvati: la stessa operazione
+// serve sia dalla lista contatti sia dopo un import.
+export const AssignCategoriesInput = z.object({
   teamId: z.string().uuid(),
-  name: z.string().min(1),
-  // MVP segmentation: tag-based only, expressed as an inspectable rule (no black box).
-  matchTags: z.array(z.string()).min(1),
-  matchMode: z.enum(["ANY", "ALL"]).default("ANY"),
+  contactIds: z.array(z.string().uuid()).min(1),
+  addCategories: z.array(z.string()).default([]),
+  removeCategories: z.array(z.string()).default([]),
 });
+export type AssignCategoriesInput = z.infer<typeof AssignCategoriesInput>;
+
+export const CreateSegmentInput = z
+  .object({
+    teamId: z.string().uuid(),
+    name: z.string().min(1),
+    // La selezione resta una regola leggibile, mai una scatola nera: per tag,
+    // per categoria, o per entrambi (in quel caso valgono tutte e due).
+    matchTags: z.array(z.string()).default([]),
+    matchCategories: z.array(z.string()).default([]),
+    matchMode: z.enum(["ANY", "ALL"]).default("ANY"),
+  })
+  .refine((v) => v.matchTags.length > 0 || v.matchCategories.length > 0, {
+    message: "Serve almeno un tag o una categoria",
+  });
 export type CreateSegmentInput = z.infer<typeof CreateSegmentInput>;
 
 export const SegmentOutput = z.object({
   id: z.string().uuid(),
   name: z.string(),
   matchTags: z.array(z.string()),
+  matchCategories: z.array(z.string()),
   matchMode: z.enum(["ANY", "ALL"]),
   contactCount: z.number().int(),
 });
@@ -64,10 +84,20 @@ export type SegmentOutput = z.infer<typeof SegmentOutput>;
 export const ListSegmentsInput = z.object({ teamId: z.string().uuid() });
 export type ListSegmentsInput = z.infer<typeof ListSegmentsInput>;
 
+// Restituisce il segmento che corrisponde a una categoria, creandolo se non
+// esiste: consente di scegliere una categoria come destinatari di una
+// campagna senza dover prima costruire un segmento a mano.
+export const EnsureCategorySegmentInput = z.object({
+  teamId: z.string().uuid(),
+  category: z.string().min(1),
+});
+export type EnsureCategorySegmentInput = z.infer<typeof EnsureCategorySegmentInput>;
+
 export const ListContactsInput = z.object({
   teamId: z.string().uuid(),
   search: z.string().optional(),
   tag: z.string().optional(),
+  category: z.string().optional(),
   limit: z.number().int().min(1).max(500).default(100),
 });
 export type ListContactsInput = z.infer<typeof ListContactsInput>;
@@ -79,6 +109,7 @@ export const ContactOutput = z.object({
   lastName: z.string().nullable(),
   email: z.string().nullable(),
   tags: z.array(z.string()),
+  categories: z.array(z.string()),
   customFields: z.record(z.string()),
   createdAt: z.string().datetime(),
 });
@@ -91,13 +122,19 @@ export const ListContactsOutput = z.object({
   // l'elenco delle variabili disponibili quando si costruisce una campagna.
   availableCustomFields: z.array(z.string()),
   availableTags: z.array(z.string()),
+  availableCategories: z.array(z.object({ name: z.string(), contactCount: z.number().int() })),
 });
 export type ListContactsOutput = z.infer<typeof ListContactsOutput>;
 
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
+  "contacts.assignCategories": {
+    input: AssignCategoriesInput,
+    output: z.object({ updated: z.number().int() }),
+  },
   "contacts.list": { input: ListContactsInput, output: ListContactsOutput },
   "contacts.createSegment": { input: CreateSegmentInput, output: SegmentOutput },
   "contacts.listSegments": { input: ListSegmentsInput, output: z.array(SegmentOutput) },
+  "contacts.ensureCategorySegment": { input: EnsureCategorySegmentInput, output: SegmentOutput },
 } as const;

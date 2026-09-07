@@ -13,6 +13,7 @@ export const CONTACT_FIELDS = [
   { key: "firstName", label: "Nome", required: false },
   { key: "lastName", label: "Cognome", required: false },
   { key: "email", label: "Email", required: false },
+  { key: "categories", label: "Categoria (separate da virgola)", required: false },
   { key: "tags", label: "Tag (separati da virgola)", required: false },
 ] as const;
 
@@ -95,6 +96,9 @@ export interface NormalizedRow {
   lastName?: string;
   email?: string;
   tags: string[];
+  // Popolate dalla colonna mappata, se c'è; altrimenti assegnate a mano nella
+  // schermata di revisione prima dell'import.
+  categories: string[];
   customFields: Record<string, string>;
 }
 
@@ -129,6 +133,12 @@ export function normalizeRows(
       ...options.extraTags,
     ];
 
+    const rawCategories = mapping.fields.categories ? (row[mapping.fields.categories] ?? "") : "";
+    const categories = rawCategories
+      .split(/[,;]/)
+      .map((c) => c.trim())
+      .filter(Boolean);
+
     const customFields: Record<string, string> = {};
     for (const column of mapping.customColumns) {
       const value = (row[column] ?? "").trim();
@@ -145,6 +155,7 @@ export function normalizeRows(
       // scartiamo e teniamo il resto (il canale principale è WhatsApp).
       email: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : undefined,
       tags: Array.from(new Set(tags)),
+      categories: Array.from(new Set(categories)),
       customFields,
     });
   });

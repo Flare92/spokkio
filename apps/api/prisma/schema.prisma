@@ -130,6 +130,11 @@ model Contact {
   lastName    String?
   email       String?
   tags        String[] @default([])
+  // Raggruppamento principale scelto dall'utente (es. "Clienti VIP",
+  // "Newsletter"): è ciò che viene proposto come destinatario al momento di
+  // creare una campagna. Distinto dai tag, che restano un'etichettatura
+  // libera e più granulare.
+  categories  String[] @default([])
   // Colonne arbitrarie importate da CSV/Excel (es. "citta", "ultimo_acquisto"):
   // diventano variabili utilizzabili nei template delle campagne.
   customFields Json    @default("{}")
@@ -152,6 +157,10 @@ model Segment {
   teamId    String
   name      String
   matchTags String[]
+  // Un segmento può selezionare per categoria, per tag, o per entrambi:
+  // quando ci sono tutte e due, il contatto deve soddisfare entrambe le
+  // condizioni. La regola resta sempre leggibile a schermo.
+  matchCategories String[] @default([])
   matchMode String   @default("ANY") // ANY | ALL — inspectable rule, no black-box ML segmentation in MVP
   createdAt DateTime @default(now())
 
