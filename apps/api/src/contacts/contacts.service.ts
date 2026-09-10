@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import type {
   ImportContactsInput,
   ImportContactsOutput,
@@ -9,6 +9,15 @@ import type {
   ListContactsInput,
   ListContactsOutput,
   EnsureCategorySegmentInput,
+  ContactOutput,
+  GetContactInput,
+  ContactDetailOutput,
+  UpdateContactInput,
+  FindDuplicateContactsInput,
+  DuplicateGroup,
+  MergeContactsInput,
+  ExportContactsInput,
+  ExportContactsOutput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -278,6 +287,270 @@ export class ContactsService {
     return segment;
   }
 
+  // Tool: contacts.get — scheda contatto: dati, conversazioni e campagne
+  // ricevute, più eventuali duplicati sospetti su questo stesso contatto.
+  async getContactDetail(input: GetContactInput): Promise<ContactDetailOutput> {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: input.contactId, teamId: input.teamId },
+    });
+    if (!contact) throw new NotFoundException("Contact not found");
+
+    const [conversations, messages] = await Promise.all([
+      this.prisma.conversation.findMany({
+        where: { contactId: contact.id },
+        include: { messages: { orderBy: { createdAt: "desc" }, take: 1 }, _count: { select: { messages: true } } },
+        orderBy: { createdAt: "desc" },
+      }),
+      this.prisma.message.findMany({
+        where: { conversation: { contactId: contact.id }, campaignId: { not: null } },
+        include: { campaign: true },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    const duplicates = await this.findDuplicatesFor(contact);
+
+    return {
+      contact: this.toContactOutput(contact),
+      conversations: conversations.map((c) => ({
+        id: c.id,
+        lastMessagePreview: c.messages[0]?.text ?? "",
+        lastMessageAt: (c.messages[0]?.createdAt ?? c.createdAt).toISOString(),
+        messageCount: c._count.messages,
+        closedAt: c.closedAt ? c.closedAt.toISOString() : null,
+      })),
+      campaigns: messages
+        .filter((m) => m.campaign)
+        .map((m) => ({
+          campaignId: m.campaign!.id,
+          name: m.campaign!.name,
+          status: m.campaign!.status,
+          sentAt: m.campaign!.sentAt ? m.campaign!.sentAt.toISOString() : null,
+          messageStatus: m.status,
+        })),
+      possibleDuplicates: duplicates,
+    };
+  }
+
+  // Tool: contacts.update
+  async updateContact(input: UpdateContactInput): Promise<ContactOutput> {
+    const contact = await this.prisma.contact.findFirst({
+      where: { id: input.contactId, teamId: input.teamId },
+    });
+    if (!contact) throw new NotFoundException("Contact not found");
+
+    if (input.phoneE164 && input.phoneE164 !== contact.phoneE164) {
+      const clash = await this.prisma.contact.findUnique({
+        where: { teamId_phoneE164: { teamId: input.teamId, phoneE164: input.phoneE164 } },
+      });
+      if (clash) throw new BadRequestException("Un altro contatto ha già questo numero");
+    }
+
+    const updated = await this.prisma.contact.update({
+      where: { id: contact.id },
+      data: {
+        phoneE164: input.phoneE164 ?? contact.phoneE164,
+        firstName: input.firstName === undefined ? contact.firstName : input.firstName,
+        lastName: input.lastName === undefined ? contact.lastName : input.lastName,
+        email: input.email === undefined ? contact.email : input.email,
+        tags: input.tags ?? contact.tags,
+        categories: input.categories ?? contact.categories,
+        customFields:
+          input.customFields === undefined
+            ? (contact.customFields as object)
+            : { ...((contact.customFields as Record<string, string>) ?? {}), ...input.customFields },
+      },
+    });
+
+    if (input.categories) await this.refreshCategorySegments(input.teamId);
+    return this.toContactOutput(updated);
+  }
+
+  // Tool: contacts.findDuplicates — scansione esplicita su tutto il team:
+  // stesso numero scritto in modo diverso, o stesso nome+cognome. Nessun
+  // modello statistico, solo regole che si possono spiegare a schermo.
+  async findDuplicates(input: FindDuplicateContactsInput): Promise<DuplicateGroup[]> {
+    const contacts = await this.prisma.contact.findMany({ where: { teamId: input.teamId } });
+    const groups: DuplicateGroup[] = [];
+
+    const byNormalizedPhone = new Map<string, typeof contacts>();
+    for (const c of contacts) {
+      const key = normalizePhoneForDedup(c.phoneE164);
+      byNormalizedPhone.set(key, [...(byNormalizedPhone.get(key) ?? []), c]);
+    }
+    for (const group of byNormalizedPhone.values()) {
+      if (group.length > 1) groups.push({ reason: "SAME_NORMALIZED_PHONE", contacts: group.map((c) => this.toContactOutput(c)) });
+    }
+
+    const byName = new Map<string, typeof contacts>();
+    for (const c of contacts) {
+      if (!c.firstName && !c.lastName) continue;
+      const key = `${(c.firstName ?? "").trim().toLowerCase()} ${(c.lastName ?? "").trim().toLowerCase()}`.trim();
+      if (!key) continue;
+      byName.set(key, [...(byName.get(key) ?? []), c]);
+    }
+    for (const group of byName.values()) {
+      if (group.length > 1 && !groups.some((g) => g.reason === "SAME_NORMALIZED_PHONE" && sameSet(g.contacts, group))) {
+        groups.push({ reason: "SAME_NAME", contacts: group.map((c) => this.toContactOutput(c)) });
+      }
+    }
+
+    return groups;
+  }
+
+  // Tool: contacts.merge — fonde i contatti indicati dentro quello scelto
+  // come principale: tag/categorie/campi custom si sommano, lo storico
+  // conversazioni si sposta, i duplicati vengono cancellati.
+  async mergeContacts(input: MergeContactsInput): Promise<ContactOutput> {
+    const keep = await this.prisma.contact.findFirst({
+      where: { id: input.keepContactId, teamId: input.teamId },
+    });
+    if (!keep) throw new NotFoundException("Contatto principale non trovato");
+
+    const toMerge = await this.prisma.contact.findMany({
+      where: { id: { in: input.mergeContactIds }, teamId: input.teamId },
+    });
+
+    let tags = new Set(keep.tags);
+    let categories = new Set(keep.categories);
+    let customFields = { ...((keep.customFields as Record<string, string>) ?? {}) };
+
+    for (const c of toMerge) {
+      for (const t of c.tags) tags.add(t);
+      for (const cat of c.categories) categories.add(cat);
+      customFields = { ...((c.customFields as Record<string, string>) ?? {}), ...customFields };
+
+      await this.prisma.conversation.updateMany({ where: { contactId: c.id }, data: { contactId: keep.id } });
+      await this.prisma.attributionEvent.updateMany({ where: { contactId: c.id }, data: { contactId: keep.id } });
+      await this.prisma.appointment.updateMany({ where: { contactId: c.id }, data: { contactId: keep.id } });
+      await this.prisma.segmentContact.deleteMany({ where: { contactId: c.id } });
+      await this.prisma.contact.delete({ where: { id: c.id } });
+    }
+
+    const updated = await this.prisma.contact.update({
+      where: { id: keep.id },
+      data: { tags: Array.from(tags), categories: Array.from(categories), customFields },
+    });
+
+    await this.refreshCategorySegments(input.teamId);
+    return this.toContactOutput(updated);
+  }
+
+  // Tool: contacts.export
+  async exportContacts(input: ExportContactsInput): Promise<ExportContactsOutput> {
+    let contactIds: string[] | undefined;
+    let label = "tutti";
+
+    if (input.segmentId) {
+      const segment = await this.getSegmentOrThrow(input.teamId, input.segmentId);
+      const members = await this.prisma.segmentContact.findMany({ where: { segmentId: segment.id } });
+      contactIds = members.map((m) => m.contactId);
+      label = segment.name;
+    }
+
+    const contacts = await this.prisma.contact.findMany({
+      where: {
+        teamId: input.teamId,
+        ...(contactIds ? { id: { in: contactIds } } : {}),
+        ...(input.category ? { categories: { has: input.category } } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const customFieldKeys = Array.from(
+      new Set(contacts.flatMap((c) => Object.keys((c.customFields as Record<string, string>) ?? {}))),
+    );
+
+    const header = ["telefono", "nome", "cognome", "email", "tag", "categorie", ...customFieldKeys];
+    const rows = contacts.map((c) => {
+      const custom = (c.customFields as Record<string, string>) ?? {};
+      return [
+        c.phoneE164,
+        c.firstName ?? "",
+        c.lastName ?? "",
+        c.email ?? "",
+        c.tags.join("|"),
+        c.categories.join("|"),
+        ...customFieldKeys.map((k) => custom[k] ?? ""),
+      ];
+    });
+
+    const csv = [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\r\n");
+    const safeLabel = label.replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+
+    return {
+      csv,
+      filename: `contatti_${safeLabel}_${new Date().toISOString().slice(0, 10)}.csv`,
+      count: contacts.length,
+    };
+  }
+
+  private async findDuplicatesFor(
+    contact: { id: string; teamId: string; phoneE164: string; firstName: string | null; lastName: string | null },
+  ) {
+    if (!contact.firstName && !contact.lastName) {
+      const others = await this.prisma.contact.findMany({
+        where: {
+          teamId: contact.teamId,
+          id: { not: contact.id },
+        },
+      });
+      const key = normalizePhoneForDedup(contact.phoneE164);
+      return others
+        .filter((o) => normalizePhoneForDedup(o.phoneE164) === key)
+        .map((o) => ({
+          id: o.id,
+          phoneE164: o.phoneE164,
+          name: [o.firstName, o.lastName].filter(Boolean).join(" ") || null,
+          reason: "Stesso numero scritto in modo diverso",
+        }));
+    }
+
+    const others = await this.prisma.contact.findMany({
+      where: { teamId: contact.teamId, id: { not: contact.id } },
+    });
+    const phoneKey = normalizePhoneForDedup(contact.phoneE164);
+    const nameKey = `${(contact.firstName ?? "").trim().toLowerCase()} ${(contact.lastName ?? "").trim().toLowerCase()}`.trim();
+
+    return others
+      .filter((o) => {
+        const sameName =
+          nameKey && `${(o.firstName ?? "").trim().toLowerCase()} ${(o.lastName ?? "").trim().toLowerCase()}`.trim() === nameKey;
+        const samePhone = normalizePhoneForDedup(o.phoneE164) === phoneKey;
+        return sameName || samePhone;
+      })
+      .map((o) => ({
+        id: o.id,
+        phoneE164: o.phoneE164,
+        name: [o.firstName, o.lastName].filter(Boolean).join(" ") || null,
+        reason: normalizePhoneForDedup(o.phoneE164) === phoneKey ? "Stesso numero scritto in modo diverso" : "Stesso nome",
+      }));
+  }
+
+  private toContactOutput(c: {
+    id: string;
+    phoneE164: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+    tags: string[];
+    categories: string[];
+    customFields: unknown;
+    createdAt: Date;
+  }): ContactOutput {
+    return {
+      id: c.id,
+      phoneE164: c.phoneE164,
+      firstName: c.firstName,
+      lastName: c.lastName,
+      email: c.email,
+      tags: c.tags,
+      categories: c.categories,
+      customFields: (c.customFields as Record<string, string>) ?? {},
+      createdAt: c.createdAt.toISOString(),
+    };
+  }
+
   // Riallinea l'elenco materializzato di un segmento alla sua regola.
   private async syncSegmentMembership(segmentId: string): Promise<number> {
     const segment = await this.prisma.segment.findUnique({ where: { id: segmentId } });
@@ -331,4 +604,23 @@ export class ContactsService {
       return tagsOk && categoriesOk;
     });
   }
+}
+
+// Riduce un numero ai soli ultimi 9 cifre significative: fa combaciare
+// "+393331234567", "3331234567" e "0039 333 1234567" come lo stesso numero,
+// senza dover indovinare il prefisso internazionale di partenza.
+function normalizePhoneForDedup(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return digits.slice(-9);
+}
+
+function sameSet(a: { id: string }[], b: { id: string }[]): boolean {
+  if (a.length !== b.length) return false;
+  const idsA = new Set(a.map((x) => x.id));
+  return b.every((x) => idsA.has(x.id));
+}
+
+function csvEscape(value: string): string {
+  if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+  return value;
 }

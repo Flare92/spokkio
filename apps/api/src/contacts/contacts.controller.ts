@@ -7,6 +7,11 @@ import {
   ListSegmentsInput,
   ListContactsInput,
   EnsureCategorySegmentInput,
+  GetContactInput,
+  UpdateContactInput,
+  FindDuplicateContactsInput,
+  MergeContactsInput,
+  ExportContactsInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -62,5 +67,35 @@ export class ContactsController {
   @Post("segments/list")
   listSegments(@Body(new ZodValidationPipe(ListSegmentsInput)) body: ListSegmentsInput) {
     return this.contacts.listSegments(body);
+  }
+
+  // tool: contacts.get
+  @Post("get")
+  get(@Body(new ZodValidationPipe(GetContactInput)) body: GetContactInput) {
+    return this.contacts.getContactDetail(body);
+  }
+
+  // tool: contacts.update
+  @Post("update")
+  update(@Body(new ZodValidationPipe(UpdateContactInput)) body: UpdateContactInput) {
+    return this.contacts.updateContact(body);
+  }
+
+  // tool: contacts.findDuplicates
+  @Post("duplicates")
+  findDuplicates(@Body(new ZodValidationPipe(FindDuplicateContactsInput)) body: FindDuplicateContactsInput) {
+    return this.contacts.findDuplicates(body);
+  }
+
+  // tool: contacts.merge
+  @Post("merge")
+  merge(@Body(new ZodValidationPipe(MergeContactsInput)) body: MergeContactsInput) {
+    return this.contacts.mergeContacts(body);
+  }
+
+  // tool: contacts.export
+  @Post("export")
+  export(@Body(new ZodValidationPipe(ExportContactsInput)) body: ExportContactsInput) {
+    return this.contacts.exportContacts(body);
   }
 }

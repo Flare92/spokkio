@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Nav } from "@/components/nav";
 import { callTool, decodeTeamId } from "@/lib/api";
 import {
@@ -135,6 +136,8 @@ export default function ContactsPage() {
           knownCategories={knownCategories}
           onChanged={refreshAll}
         />
+
+        <DuplicatesSection teamId={teamId} onChanged={refreshAll} />
 
         <SegmentsSection
           teamId={teamId}
@@ -681,18 +684,32 @@ function ContactsTable({
     }
   }
 
+  async function handleExport() {
+    try {
+      const result = await callTool<{ csv: string; filename: string }>("/contacts/export", { teamId });
+      downloadCsv(result.csv, result.filename);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Esportazione fallita");
+    }
+  }
+
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-lg font-semibold">
           Contatti {list ? <span className="text-sm font-normal text-gray-500">({list.total})</span> : null}
         </h2>
-        <input
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Cerca nome, numero, email..."
-          className="w-64 rounded border px-3 py-1.5 text-sm"
-        />
+        <div className="flex gap-2">
+          <input
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Cerca nome, numero, email..."
+            className="w-64 rounded border px-3 py-1.5 text-sm"
+          />
+          <button onClick={handleExport} className="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
+            Esporta CSV
+          </button>
+        </div>
       </div>
 
       {selected.size > 0 && (
@@ -777,8 +794,16 @@ function ContactsTable({
                     }
                   />
                 </td>
-                <td className="px-3 py-2 font-mono text-xs">{c.phoneE164}</td>
-                <td className="px-3 py-2">{[c.firstName, c.lastName].filter(Boolean).join(" ") || "—"}</td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  <Link href={`/contacts/${c.id}`} className="text-brand-dark hover:underline">
+                    {c.phoneE164}
+                  </Link>
+                </td>
+                <td className="px-3 py-2">
+                  <Link href={`/contacts/${c.id}`} className="hover:underline">
+                    {[c.firstName, c.lastName].filter(Boolean).join(" ") || "—"}
+                  </Link>
+                </td>
                 <td className="px-3 py-2">
                   {c.categories.length === 0 ? (
                     <span className="text-xs text-gray-400">—</span>
@@ -949,21 +974,35 @@ function SegmentsSection({
       {segments.length > 0 && (
         <ul className="mt-3 space-y-2">
           {segments.map((s) => (
-            <li key={s.id} className="rounded border bg-white p-3 text-sm">
-              <span className="font-medium">{s.name}</span> — {s.contactCount} contatti
-              <span className="text-gray-500">
-                {" "}
-                (
-                {[
-                  s.matchCategories.length > 0 ? `categorie: ${s.matchCategories.join(", ")}` : null,
-                  s.matchTags.length > 0
-                    ? `${s.matchMode === "ANY" ? "almeno uno di" : "tutti"}: ${s.matchTags.join(", ")}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                )
+            <li key={s.id} className="flex items-center justify-between rounded border bg-white p-3 text-sm">
+              <span>
+                <span className="font-medium">{s.name}</span> — {s.contactCount} contatti
+                <span className="text-gray-500">
+                  {" "}
+                  (
+                  {[
+                    s.matchCategories.length > 0 ? `categorie: ${s.matchCategories.join(", ")}` : null,
+                    s.matchTags.length > 0
+                      ? `${s.matchMode === "ANY" ? "almeno uno di" : "tutti"}: ${s.matchTags.join(", ")}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  )
+                </span>
               </span>
+              <button
+                onClick={async () => {
+                  const result = await callTool<{ csv: string; filename: string }>("/contacts/export", {
+                    teamId,
+                    segmentId: s.id,
+                  });
+                  downloadCsv(result.csv, result.filename);
+                }}
+                className="text-xs text-gray-500 underline"
+              >
+                esporta
+              </button>
             </li>
           ))}
         </ul>
@@ -972,6 +1011,106 @@ function SegmentsSection({
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </section>
   );
+}
+
+/* ------------------------------------------------------------ duplicati */
+
+interface DuplicateGroup {
+  reason: "SAME_NORMALIZED_PHONE" | "SAME_NAME";
+  contacts: ContactRow[];
+}
+
+function DuplicatesSection({ teamId, onChanged }: { teamId: string | null; onChanged: () => void }) {
+  const [groups, setGroups] = useState<DuplicateGroup[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function scan() {
+    setBusy(true);
+    setError(null);
+    try {
+      setGroups((await callTool<DuplicateGroup[]>("/contacts/duplicates", { teamId })) ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Scansione fallita");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function merge(keepId: string, mergeIds: string[]) {
+    if (!confirm("Fondere i contatti selezionati? L'operazione non si può annullare.")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await callTool("/contacts/merge", { teamId, keepContactId: keepId, mergeContactIds: mergeIds });
+      await scan();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fusione fallita");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Duplicati</h2>
+        <button onClick={scan} disabled={busy} className="text-sm text-brand-dark underline disabled:opacity-40">
+          {busy ? "Scansione…" : groups === null ? "Cerca duplicati" : "Ricerca di nuovo"}
+        </button>
+      </div>
+
+      {groups !== null && groups.length === 0 && (
+        <p className="text-sm text-gray-400">Nessun duplicato trovato: stesso numero o stesso nome+cognome.</p>
+      )}
+
+      {groups && groups.length > 0 && (
+        <ul className="space-y-3">
+          {groups.map((group, i) => (
+            <li key={i} className="rounded border bg-white p-3">
+              <p className="mb-2 text-xs uppercase text-gray-500">
+                {group.reason === "SAME_NORMALIZED_PHONE" ? "Stesso numero scritto in modo diverso" : "Stesso nome e cognome"}
+              </p>
+              <ul className="space-y-1 text-sm">
+                {group.contacts.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between">
+                    <Link href={`/contacts/${c.id}`} className="hover:underline">
+                      {[c.firstName, c.lastName].filter(Boolean).join(" ") || "—"}{" "}
+                      <span className="font-mono text-xs text-gray-500">{c.phoneE164}</span>
+                    </Link>
+                    <button
+                      onClick={() =>
+                        merge(
+                          c.id,
+                          group.contacts.filter((other) => other.id !== c.id).map((other) => other.id),
+                        )
+                      }
+                      className="text-xs text-gray-500 underline"
+                    >
+                      tieni questo, fondi gli altri
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
+function downloadCsv(csv: string, filename: string) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 // Prova a indovinare la mappatura dalle intestazioni più comuni, così nel caso

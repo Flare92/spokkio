@@ -126,6 +126,84 @@ export const ListContactsOutput = z.object({
 });
 export type ListContactsOutput = z.infer<typeof ListContactsOutput>;
 
+export const GetContactInput = z.object({ teamId: z.string().uuid(), contactId: z.string().uuid() });
+export type GetContactInput = z.infer<typeof GetContactInput>;
+
+export const UpdateContactInput = z.object({
+  teamId: z.string().uuid(),
+  contactId: z.string().uuid(),
+  phoneE164: z.string().regex(/^\+[1-9]\d{6,14}$/, "phone must be E.164").optional(),
+  firstName: z.string().nullable().optional(),
+  lastName: z.string().nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  categories: z.array(z.string()).optional(),
+  customFields: z.record(z.string()).optional(),
+});
+export type UpdateContactInput = z.infer<typeof UpdateContactInput>;
+
+export const ContactConversationSummary = z.object({
+  id: z.string().uuid(),
+  lastMessagePreview: z.string(),
+  lastMessageAt: z.string().datetime(),
+  messageCount: z.number().int(),
+  closedAt: z.string().datetime().nullable(),
+});
+export type ContactConversationSummary = z.infer<typeof ContactConversationSummary>;
+
+export const ContactCampaignSummary = z.object({
+  campaignId: z.string().uuid(),
+  name: z.string(),
+  status: z.string(),
+  sentAt: z.string().datetime().nullable(),
+  messageStatus: z.string().nullable(),
+});
+export type ContactCampaignSummary = z.infer<typeof ContactCampaignSummary>;
+
+export const ContactDetailOutput = z.object({
+  contact: ContactOutput,
+  conversations: z.array(ContactConversationSummary),
+  campaigns: z.array(ContactCampaignSummary),
+  possibleDuplicates: z.array(
+    z.object({ id: z.string().uuid(), phoneE164: z.string(), name: z.string().nullable(), reason: z.string() }),
+  ),
+});
+export type ContactDetailOutput = z.infer<typeof ContactDetailOutput>;
+
+// Cerca contatti la cui identità sembra sovrapporsi (stesso numero scritto
+// diversamente, o stesso nome+cognome con numeri diversi): una scansione
+// esplicita, non un modello — ogni suggerimento è spiegabile a schermo.
+export const FindDuplicateContactsInput = z.object({ teamId: z.string().uuid() });
+export type FindDuplicateContactsInput = z.infer<typeof FindDuplicateContactsInput>;
+
+export const DuplicateGroup = z.object({
+  reason: z.enum(["SAME_NORMALIZED_PHONE", "SAME_NAME"]),
+  contacts: z.array(ContactOutput),
+});
+export type DuplicateGroup = z.infer<typeof DuplicateGroup>;
+
+export const MergeContactsInput = z.object({
+  teamId: z.string().uuid(),
+  // Il contatto che resta: gli altri vengono fusi dentro e cancellati.
+  keepContactId: z.string().uuid(),
+  mergeContactIds: z.array(z.string().uuid()).min(1),
+});
+export type MergeContactsInput = z.infer<typeof MergeContactsInput>;
+
+export const ExportContactsInput = z.object({
+  teamId: z.string().uuid(),
+  segmentId: z.string().uuid().optional(),
+  category: z.string().optional(),
+});
+export type ExportContactsInput = z.infer<typeof ExportContactsInput>;
+
+export const ExportContactsOutput = z.object({
+  csv: z.string(),
+  filename: z.string(),
+  count: z.number().int(),
+});
+export type ExportContactsOutput = z.infer<typeof ExportContactsOutput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
@@ -137,4 +215,9 @@ export const CONTACTS_TOOLS = {
   "contacts.createSegment": { input: CreateSegmentInput, output: SegmentOutput },
   "contacts.listSegments": { input: ListSegmentsInput, output: z.array(SegmentOutput) },
   "contacts.ensureCategorySegment": { input: EnsureCategorySegmentInput, output: SegmentOutput },
+  "contacts.get": { input: GetContactInput, output: ContactDetailOutput },
+  "contacts.update": { input: UpdateContactInput, output: ContactOutput },
+  "contacts.findDuplicates": { input: FindDuplicateContactsInput, output: z.array(DuplicateGroup) },
+  "contacts.merge": { input: MergeContactsInput, output: ContactOutput },
+  "contacts.export": { input: ExportContactsInput, output: ExportContactsOutput },
 } as const;
