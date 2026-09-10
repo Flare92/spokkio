@@ -33,6 +33,52 @@ export class WhatsAppService {
     return this.queue.enqueue(params.phoneNumberId, () => this.sendOnce(params));
   }
 
+  // Sottomette davvero il template a Meta per la review, invece di lasciarlo
+  // solo come record locale in attesa. L'approvazione/rifiuto arriva comunque
+  // in modo asincrono via webhook (webhook-ingest.service.ts) — questa
+  // chiamata dice solo se la sottomissione è stata accettata per la coda di
+  // revisione di Meta.
+  async submitTemplate(params: {
+    wabaId: string;
+    accessToken: string;
+    name: string;
+    category: MessageCategory;
+    language: string;
+    bodyText: string;
+  }): Promise<{ metaTemplateId: string } | { error: string }> {
+    const variableCount = new Set(
+      Array.from(params.bodyText.matchAll(/\{\{(\d+)\}\}/g)).map((m) => Number(m[1])),
+    ).size;
+
+    const bodyComponent: Record<string, unknown> = { type: "BODY", text: params.bodyText };
+    if (variableCount > 0) {
+      // Meta richiede un esempio per ogni variabile per poter valutare il
+      // template in revisione — senza, la sottomissione viene rifiutata.
+      bodyComponent.example = { body_text: [Array.from({ length: variableCount }, (_, i) => `esempio${i + 1}`)] };
+    }
+
+    try {
+      const response = await fetch(`${GRAPH_BASE_URL}/${params.wabaId}/message_templates`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${params.accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: params.name,
+          category: params.category,
+          language: params.language,
+          components: [bodyComponent],
+        }),
+      });
+
+      const json = (await response.json()) as { id?: string; error?: { message: string } };
+      if (!response.ok || json.error || !json.id) {
+        return { error: json.error?.message ?? `HTTP ${response.status}` };
+      }
+      return { metaTemplateId: json.id };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "errore di rete" };
+    }
+  }
+
   // Free-form session reply — only deliverable inside Meta's 24h
   // customer-service window opened by an inbound message. Distinct from
   // sendTemplateMessage because it hits a different message `type` and

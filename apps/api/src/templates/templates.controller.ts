@@ -1,5 +1,5 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { CreateTemplateInput, ListTemplatesInput } from "@spokkio/shared";
+import { CreateTemplateInput, ListTemplatesInput, SubmitTemplateInput } from "@spokkio/shared";
 import { TemplatesService } from "./templates.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -20,5 +20,11 @@ export class TemplatesController {
   @Post("list")
   list(@Body(new ZodValidationPipe(ListTemplatesInput)) body: ListTemplatesInput) {
     return this.templates.listTemplates(body);
+  }
+
+  // tool: templates.submit
+  @Post("submit")
+  submit(@Body(new ZodValidationPipe(SubmitTemplateInput)) body: SubmitTemplateInput) {
+    return this.templates.submitTemplate(body);
   }
 }

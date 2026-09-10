@@ -196,6 +196,11 @@ model Template {
   variables       String[]        @default([])
   status          TemplateStatus  @default(DRAFT)
   rejectionReason String?
+  // ID assegnato da Meta dopo la sottomissione reale per la review; null se
+  // la sottomissione non è ancora avvenuta o è fallita (vedi
+  // submissionError).
+  metaTemplateId  String?
+  submissionError String?
   createdAt       DateTime        @default(now())
 
   campaigns   Campaign[]

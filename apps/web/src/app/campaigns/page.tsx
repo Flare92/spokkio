@@ -17,6 +17,8 @@ interface TemplateOutput {
   language?: string;
   bodyText?: string;
   rejectionReason: string | null;
+  metaTemplateId?: string | null;
+  submissionError?: string | null;
 }
 interface CostEstimateOutput {
   recipientCount: number;
@@ -688,6 +690,8 @@ function TemplatesSection({
   const [language, setLanguage] = useState("it");
   const [error, setError] = useState<string | null>(null);
 
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -699,6 +703,19 @@ function TemplatesSection({
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creazione template fallita");
+    }
+  }
+
+  async function submitToMeta(templateId: string) {
+    setSubmittingId(templateId);
+    setError(null);
+    try {
+      await callTool("/templates/submit", { teamId, templateId });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sottomissione a Meta fallita");
+    } finally {
+      setSubmittingId(null);
     }
   }
 
@@ -757,14 +774,29 @@ function TemplatesSection({
 
       <ul className="space-y-1 text-sm">
         {templates.map((t) => (
-          <li key={t.id} className="flex items-center justify-between rounded border bg-white px-3 py-2">
-            <span>
-              {t.name} <span className="text-xs text-gray-400">· {t.category}</span>
-            </span>
-            <span className="text-xs">
-              <StatusBadge status={t.status} />
-              {t.rejectionReason && <span className="ml-2 text-red-600">{t.rejectionReason}</span>}
-            </span>
+          <li key={t.id} className="rounded border bg-white px-3 py-2">
+            <div className="flex items-center justify-between">
+              <span>
+                {t.name} <span className="text-xs text-gray-400">· {t.category}</span>
+              </span>
+              <span className="flex items-center gap-2 text-xs">
+                <StatusBadge status={t.status} />
+                {!t.metaTemplateId && (
+                  <button
+                    onClick={() => submitToMeta(t.id)}
+                    disabled={submittingId === t.id}
+                    className="rounded border px-2 py-0.5 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    {submittingId === t.id ? "invio…" : "sottometti a Meta"}
+                  </button>
+                )}
+              </span>
+            </div>
+            {t.rejectionReason && <p className="mt-1 text-xs text-red-600">Rifiutato da Meta: {t.rejectionReason}</p>}
+            {t.submissionError && <p className="mt-1 text-xs text-red-600">Sottomissione fallita: {t.submissionError}</p>}
+            {t.metaTemplateId && t.status === "PENDING_REVIEW" && (
+              <p className="mt-1 text-xs text-gray-400">In revisione su Meta — l&apos;esito arriva automaticamente.</p>
+            )}
           </li>
         ))}
       </ul>
