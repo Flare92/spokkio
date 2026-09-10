@@ -128,6 +128,23 @@ Poi:
 4. Da **Campagne**, crea un template — attenzione: un template nuovo deve prima essere **approvato da Meta** (ci mette da pochi minuti a qualche ora) prima di poterlo usare in una campagna. Lo stato lo vedi accanto al nome del template nella pagina Campagne, si aggiorna da solo quando arriva il webhook di approvazione (serve il punto 3.5 per riceverlo automaticamente; in alternativa controlla lo stato direttamente su developers.facebook.com → WhatsApp → Gestione modelli di messaggio)
 5. Simula il costo, crea la campagna e inviala — dovresti ricevere il messaggio reale sul tuo WhatsApp
 
+In alternativa, se hai già installato l'app con `scripts/build-mac-app.sh` (vedi il changelog di Fase 1.1), apri semplicemente **Spokkio** da Launchpad/Applicazioni invece dei due terminali: fa tutto da sola, incluso quanto descritto qui sotto.
+
+## Aggiornamenti e backup automatici
+
+Ad ogni avvio, **Spokkio.app** (tramite `scripts/spokkio-run.sh`) fa da sola due cose, senza bisogno di ricordartele:
+
+- **Si aggiorna.** Controlla se il branch remoto è avanti e, se non hai modifiche locali in sospeso, si allinea da sola (fast-forward). Se hai modifiche locali o la rete non risponde, salta l'aggiornamento e continua con la versione che hai — non tocca mai nulla che rischi di rompere il repository.
+- **Fa un backup del database.** Prima di applicare qualunque modifica allo schema, salva un dump compresso in `~/Library/Application Support/Spokkio/backups/` (al massimo uno al giorno, per non rallentare gli avvii successivi) e tiene solo gli ultimi 14.
+
+Per ripristinare un backup (sovrascrive il database corrente — chiudi prima Spokkio):
+
+```bash
+./scripts/spokkio-restore-backup.sh
+```
+
+Ti mostra l'elenco dei backup disponibili e te ne fa scegliere uno.
+
 ## Limiti del numero di test gratuito (da sapere)
 
 - Puoi inviare solo verso i numeri che hai registrato come destinatari (max 5)

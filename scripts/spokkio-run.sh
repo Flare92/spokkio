@@ -41,6 +41,34 @@ trap cleanup EXIT INT TERM
 
 log "Avvio Spokkio da $ROOT_DIR"
 
+# --- Aggiornamento automatico -------------------------------------------------
+# Non essendo distribuita da uno store, Spokkio si allinea da sola al branch
+# remoto ad ogni avvio: solo se l'albero di lavoro è pulito e l'avanzamento è
+# un fast-forward pulito. In ogni altro caso (modifiche locali, storia
+# divergente, nessuna rete) non tocchiamo nulla — meglio un aggiornamento
+# saltato che un repository rotto sul computer dell'utente.
+if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  BRANCH="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ -n "$BRANCH" && "$BRANCH" != "HEAD" ]] && git -C "$ROOT_DIR" fetch origin "$BRANCH" --quiet 2>>"$LOG_FILE"; then
+    LOCAL_REV="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)"
+    REMOTE_REV="$(git -C "$ROOT_DIR" rev-parse "origin/$BRANCH" 2>/dev/null)"
+    if [[ -n "$REMOTE_REV" && "$LOCAL_REV" != "$REMOTE_REV" ]]; then
+      if [[ -z "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]]; then
+        log "Aggiornamento disponibile: scarico l'ultima versione di Spokkio..."
+        if git -C "$ROOT_DIR" merge --ff-only "origin/$BRANCH" >>"$LOG_FILE" 2>&1; then
+          log "Spokkio aggiornato a $(git -C "$ROOT_DIR" rev-parse --short HEAD)."
+        else
+          log "Aggiornamento saltato: impossibile avanzare in fast-forward (storia divergente)."
+        fi
+      else
+        log "Aggiornamento disponibile ma ci sono modifiche locali non salvate: lo salto."
+      fi
+    fi
+  else
+    log "Controllo aggiornamenti non riuscito (probabilmente offline): continuo con la versione attuale."
+  fi
+fi
+
 # --- Postgres ---------------------------------------------------------------
 if ! pg_isready -q 2>/dev/null; then
   log "Avvio PostgreSQL..."
@@ -55,6 +83,28 @@ if ! pg_isready -q 2>/dev/null; then
   log "ERRORE: PostgreSQL non risponde. Controlla $LOG_FILE"
   osascript -e 'display alert "Spokkio" message "PostgreSQL non si è avviato. Controlla il log in ~/Library/Logs/Spokkio/spokkio.log"' 2>/dev/null
   exit 1
+fi
+
+# --- Backup automatico del database -------------------------------------------
+# Un dump giornaliero prima di qualunque modifica allo schema (il prossimo
+# passo esegue "prisma db push", che può arrivare da un aggiornamento appena
+# scaricato): rete di sicurezza locale a costo zero, senza nulla da
+# configurare. Al massimo un backup al giorno, per non rallentare ogni avvio.
+BACKUP_DIR="$HOME/Library/Application Support/Spokkio/backups"
+mkdir -p "$BACKUP_DIR"
+TODAY_BACKUP="$BACKUP_DIR/spokkio-$(date +%Y%m%d).sql.gz"
+if [[ ! -f "$TODAY_BACKUP" ]]; then
+  DB_URL="$(grep '^DATABASE_URL=' "$ROOT_DIR/apps/api/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"')"
+  DB_URL="${DB_URL%%\?*}" # pg_dump non conosce il parametro "schema" che Prisma aggiunge alla connection string
+  if [[ -n "$DB_URL" ]] && pg_dump "$DB_URL" 2>>"$LOG_FILE" | gzip > "$TODAY_BACKUP.tmp"; then
+    mv "$TODAY_BACKUP.tmp" "$TODAY_BACKUP"
+    log "Backup del database salvato in $TODAY_BACKUP"
+    # Tiene solo gli ultimi 14 backup giornalieri.
+    ls -1t "$BACKUP_DIR"/spokkio-*.sql.gz 2>/dev/null | tail -n +15 | xargs rm -f
+  else
+    rm -f "$TODAY_BACKUP.tmp"
+    log "ATTENZIONE: backup del database non riuscito (continuo comunque l'avvio)."
+  fi
 fi
 
 # --- Build ------------------------------------------------------------------
