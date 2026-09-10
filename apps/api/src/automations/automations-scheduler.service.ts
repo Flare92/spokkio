@@ -5,10 +5,11 @@ import { WhatsAppService } from "../whatsapp/whatsapp.service";
 
 const EVAL_WINDOW_MINUTES = 5; // must match the cron interval below
 
-// Evaluates the three Fase 1 ready-to-use triggers every 5 minutes and fires
-// due messages exactly once each (AutomationRun is the idempotency guard).
-// This is deliberately a fixed-rule scheduler, not the general condition
-// builder promised for Fase 2.
+// Evaluates every enabled automation every 5 minutes and fires due messages
+// exactly once each (AutomationRun is the idempotency guard). The user can
+// create any number of automations per trigger type — each with its own
+// template, offset, and optional category/tag conditions — not just the 3
+// ready-to-use ones Fase 1 shipped with.
 @Injectable()
 export class AutomationsSchedulerService {
   private readonly logger = new Logger(AutomationsSchedulerService.name);
@@ -33,11 +34,32 @@ export class AutomationsSchedulerService {
           await this.evaluatePostVisitFollowup(automation as any);
         } else if (automation.triggerType === "INACTIVE_CUSTOMER_WINBACK") {
           await this.evaluateInactiveWinback(automation as any);
+        } else if (automation.triggerType === "NEW_CONTACT_WELCOME") {
+          await this.evaluateNewContactWelcome(automation as any);
         }
       } catch (err) {
         this.logger.error(`Automation ${automation.id} evaluation failed`, err as Error);
       }
     }
+  }
+
+  // An automation with conditions only fires for contacts matching at least
+  // one listed category and at least one listed tag (empty list = no
+  // restriction on that axis) — same "ANY within an axis, AND across axes"
+  // rule as segment matching, so it reads the same way across the product.
+  private matchesConditions(
+    automation: { matchCategories: string[]; matchTags: string[] },
+    contact: { categories: string[]; tags: string[] },
+  ): boolean {
+    if (automation.matchCategories.length > 0) {
+      const hasCategory = automation.matchCategories.some((c) => contact.categories.includes(c));
+      if (!hasCategory) return false;
+    }
+    if (automation.matchTags.length > 0) {
+      const hasTag = automation.matchTags.some((t) => contact.tags.includes(t));
+      if (!hasTag) return false;
+    }
+    return true;
   }
 
   // offsetMinutes is negative: fires |offsetMinutes| before the appointment.
@@ -52,6 +74,7 @@ export class AutomationsSchedulerService {
     });
 
     for (const appointment of dueAppointments) {
+      if (!this.matchesConditions(automation, appointment.contact)) continue;
       await this.fireOnce(automation, appointment.contactId, appointment.id, appointment.contact.phoneE164);
     }
   }
@@ -68,6 +91,7 @@ export class AutomationsSchedulerService {
     });
 
     for (const appointment of completedAppointments) {
+      if (!this.matchesConditions(automation, appointment.contact)) continue;
       await this.fireOnce(automation, appointment.contactId, appointment.id, appointment.contact.phoneE164);
     }
   }
@@ -84,7 +108,26 @@ export class AutomationsSchedulerService {
     });
 
     for (const contact of inactiveContacts) {
+      if (!this.matchesConditions(automation, contact)) continue;
       // referenceId reuses contactId since there's no per-cycle event id for winback.
+      await this.fireOnce(automation, contact.id, contact.id, contact.phoneE164);
+    }
+  }
+
+  // offsetMinutes is positive: fires that many minutes after the contact was
+  // created (e.g. offsetMinutes = 5 for an almost-instant welcome message).
+  private async evaluateNewContactWelcome(automation: AutomationWithTemplate) {
+    const now = new Date();
+    const windowStart = this.addMinutes(now, -automation.offsetMinutes - EVAL_WINDOW_MINUTES);
+    const windowEnd = this.addMinutes(now, -automation.offsetMinutes);
+
+    const newContacts = await this.prisma.contact.findMany({
+      where: { teamId: automation.teamId, createdAt: { gte: windowStart, lt: windowEnd } },
+    });
+
+    for (const contact of newContacts) {
+      if (!this.matchesConditions(automation, contact)) continue;
+      // referenceId reuses contactId: a welcome message fires at most once per contact.
       await this.fireOnce(automation, contact.id, contact.id, contact.phoneE164);
     }
   }
@@ -161,5 +204,7 @@ interface AutomationWithTemplate {
   teamId: string;
   triggerType: string;
   offsetMinutes: number;
+  matchCategories: string[];
+  matchTags: string[];
   template: { name: string; language: string; category: any; bodyText: string };
 }

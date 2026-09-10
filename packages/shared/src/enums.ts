@@ -24,6 +24,7 @@ export const AutomationTriggerTypeValues = [
   "APPOINTMENT_REMINDER",
   "POST_VISIT_FOLLOWUP",
   "INACTIVE_CUSTOMER_WINBACK",
+  "NEW_CONTACT_WELCOME",
 ] as const;
 export type AutomationTriggerType = (typeof AutomationTriggerTypeValues)[number];
 

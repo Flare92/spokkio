@@ -58,6 +58,7 @@ enum AutomationTriggerType {
   APPOINTMENT_REMINDER
   POST_VISIT_FOLLOWUP
   INACTIVE_CUSTOMER_WINBACK
+  NEW_CONTACT_WELCOME
 }
 
 enum AppointmentStatus {
@@ -313,10 +314,20 @@ model Automation {
   id            String                @id @default(uuid())
   team          Team                  @relation(fields: [teamId], references: [id])
   teamId        String
+  // Etichetta libera scelta dall'utente per riconoscere l'automazione nella
+  // lista (es. "Promemoria taglio capelli"): distinta dal tipo di trigger,
+  // che resta il meccanismo tecnico sottostante.
+  name          String?
   triggerType   AutomationTriggerType
   template      Template              @relation(fields: [templateId], references: [id])
   templateId    String
   offsetMinutes Int
+  // Condizioni opzionali: se valorizzate, l'automazione scatta solo per i
+  // contatti che hanno almeno una delle categorie/tag elencati — permette
+  // più automazioni "personalizzate" con lo stesso trigger di base ma
+  // destinatari diversi (oltre le 3 automazioni fisse di Fase 1).
+  matchCategories String[]            @default([])
+  matchTags       String[]            @default([])
   enabled       Boolean               @default(true)
   createdAt     DateTime              @default(now())
 
