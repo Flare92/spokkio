@@ -6,6 +6,8 @@ import {
   ListCampaignsInput,
   PreviewCampaignInput,
   CancelScheduledCampaignInput,
+  DuplicateCampaignInput,
+  ABTestResultsInput,
 } from "@spokkio/shared";
 import { CampaignsService } from "./campaigns.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -53,5 +55,17 @@ export class CampaignsController {
     @Body(new ZodValidationPipe(CancelScheduledCampaignInput)) body: CancelScheduledCampaignInput,
   ) {
     return this.campaigns.cancelScheduled(body);
+  }
+
+  // tool: campaigns.duplicate
+  @Post("duplicate")
+  duplicate(@Body(new ZodValidationPipe(DuplicateCampaignInput)) body: DuplicateCampaignInput) {
+    return this.campaigns.duplicateCampaign(body);
+  }
+
+  // tool: campaigns.abTestResults
+  @Post("ab-test-results")
+  abTestResults(@Body(new ZodValidationPipe(ABTestResultsInput)) body: ABTestResultsInput) {
+    return this.campaigns.abTestResults(body);
   }
 }

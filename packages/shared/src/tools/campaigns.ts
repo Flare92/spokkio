@@ -37,6 +37,8 @@ export const VariableSource = z.object({
 });
 export type VariableSource = z.infer<typeof VariableSource>;
 
+export const RecurrenceValues = ["NONE", "DAILY", "WEEKLY", "MONTHLY"] as const;
+
 export const CreateCampaignInput = z.object({
   teamId: z.string().uuid(),
   name: z.string().min(1),
@@ -45,6 +47,11 @@ export const CreateCampaignInput = z.object({
   scheduledAt: z.string().datetime().optional(),
   // Una voce per ogni variabile del template, in ordine ({{1}}, {{2}}, ...).
   variableMapping: z.array(VariableSource).default([]),
+  // A/B test: se presente, metà dei destinatari (a caso) riceve questo
+  // template invece di templateId, che resta la variante "A".
+  variantBTemplateId: z.string().uuid().optional(),
+  recurrence: z.enum(RecurrenceValues).default("NONE"),
+  recurrenceEndAt: z.string().datetime().optional(),
 });
 export type CreateCampaignInput = z.infer<typeof CreateCampaignInput>;
 
@@ -58,8 +65,35 @@ export const CampaignOutput = z.object({
   templateName: z.string(),
   segmentName: z.string(),
   createdAt: z.string().datetime(),
+  variantBTemplateName: z.string().nullable(),
+  recurrence: z.enum(RecurrenceValues),
+  recurrenceEndAt: z.string().datetime().nullable(),
 });
 export type CampaignOutput = z.infer<typeof CampaignOutput>;
+
+export const DuplicateCampaignInput = z.object({ teamId: z.string().uuid(), campaignId: z.string().uuid() });
+export type DuplicateCampaignInput = z.infer<typeof DuplicateCampaignInput>;
+
+export const ABTestResultsInput = z.object({ teamId: z.string().uuid(), campaignId: z.string().uuid() });
+export type ABTestResultsInput = z.infer<typeof ABTestResultsInput>;
+
+export const ABVariantStats = z.object({
+  templateId: z.string().uuid(),
+  templateName: z.string(),
+  sent: z.number().int(),
+  delivered: z.number().int(),
+  read: z.number().int(),
+  clicked: z.number().int(),
+  deliveryRate: z.number(),
+  readRate: z.number(),
+});
+export type ABVariantStats = z.infer<typeof ABVariantStats>;
+
+export const ABTestResultsOutput = z.object({
+  variantA: ABVariantStats,
+  variantB: ABVariantStats.nullable(),
+});
+export type ABTestResultsOutput = z.infer<typeof ABTestResultsOutput>;
 
 export const SendCampaignInput = z.object({
   teamId: z.string().uuid(),
@@ -108,4 +142,6 @@ export const CAMPAIGNS_TOOLS = {
   "campaigns.list": { input: ListCampaignsInput, output: z.array(CampaignOutput) },
   "campaigns.preview": { input: PreviewCampaignInput, output: PreviewCampaignOutput },
   "campaigns.cancelScheduled": { input: CancelScheduledCampaignInput, output: CampaignOutput },
+  "campaigns.duplicate": { input: DuplicateCampaignInput, output: CampaignOutput },
+  "campaigns.abTestResults": { input: ABTestResultsInput, output: ABTestResultsOutput },
 } as const;

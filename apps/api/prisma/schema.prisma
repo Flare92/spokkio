@@ -203,8 +203,9 @@ model Template {
   submissionError String?
   createdAt       DateTime        @default(now())
 
-  campaigns   Campaign[]
-  automations Automation[]
+  campaigns        Campaign[]
+  variantBCampaigns Campaign[] @relation("CampaignVariantB")
+  automations      Automation[]
 
   @@index([teamId])
   @@map("templates")
@@ -229,6 +230,15 @@ model Campaign {
   // Cost estimate the user accepted before send — persisted for audit, never
   // silently exceeded (product constraint: no shock overage).
   acceptedCostEstimateTotal Decimal? @db.Decimal(10, 2)
+  // A/B test: se impostato, metà dei destinatari (a caso) riceve questo
+  // template invece di quello principale, che resta la variante "A".
+  variantBTemplate   Template? @relation("CampaignVariantB", fields: [variantBTemplateId], references: [id])
+  variantBTemplateId String?
+  // Ripetizione automatica: NONE | DAILY | WEEKLY | MONTHLY. Ogni ricorrenza
+  // è una riga Campaign a sé (per tenere separate le statistiche di ogni
+  // invio), generata dallo scheduler quando questa viene consegnata.
+  recurrence      String    @default("NONE")
+  recurrenceEndAt DateTime?
   createdAt     DateTime       @default(now())
 
   messages Message[]
@@ -260,6 +270,9 @@ model Message {
   conversationId String
   campaign       Campaign?             @relation(fields: [campaignId], references: [id])
   campaignId     String?
+  // Quale variante del test A/B ha ricevuto questo destinatario, se la
+  // campagna ne aveva una impostata — null per le campagne normali.
+  abVariant      String?
   direction      MessageDirection
   category       MessageCategory?      // set for outbound template sends, drives billing
   text           String

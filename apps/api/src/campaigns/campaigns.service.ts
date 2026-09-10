@@ -9,12 +9,18 @@ import type {
   PreviewCampaignInput,
   PreviewCampaignOutput,
   CancelScheduledCampaignInput,
+  DuplicateCampaignInput,
+  ABTestResultsInput,
+  ABTestResultsOutput,
+  ABVariantStats,
   VariableSource,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { META_CONVERSATION_RATE_EUR_IT, PLATFORM_MARKUP_EUR } from "./pricing";
 import { countTemplateVariables, renderTemplate } from "./render";
+
+const DELIVERED_STATUSES = ["DELIVERED", "READ"];
 
 @Injectable()
 export class CampaignsService {
@@ -78,17 +84,24 @@ export class CampaignsService {
 
   // Tool: campaigns.create
   async createCampaign(input: CreateCampaignInput): Promise<CampaignOutput> {
-    const [segment, template] = await Promise.all([
+    const [segment, template, variantBTemplate] = await Promise.all([
       this.prisma.segment.findFirst({
         where: { id: input.segmentId, teamId: input.teamId },
         include: { contacts: true },
       }),
       this.prisma.template.findFirst({ where: { id: input.templateId, teamId: input.teamId } }),
+      input.variantBTemplateId
+        ? this.prisma.template.findFirst({ where: { id: input.variantBTemplateId, teamId: input.teamId } })
+        : Promise.resolve(null),
     ]);
     if (!segment) throw new NotFoundException("Segment not found");
     if (!template) throw new NotFoundException("Template not found");
     if (template.status !== "APPROVED") {
       throw new BadRequestException("Template must be APPROVED by Meta before it can be used in a campaign");
+    }
+    if (input.variantBTemplateId && !variantBTemplate) throw new NotFoundException("Variant B template not found");
+    if (variantBTemplate && variantBTemplate.status !== "APPROVED") {
+      throw new BadRequestException("La variante B deve essere anch'essa un template APPROVED");
     }
 
     const requiredVariables = countTemplateVariables(template.bodyText);
@@ -101,6 +114,9 @@ export class CampaignsService {
     if (input.scheduledAt && new Date(input.scheduledAt).getTime() <= Date.now()) {
       throw new BadRequestException("La data di invio programmato deve essere nel futuro");
     }
+    if (input.recurrence !== "NONE" && !input.scheduledAt) {
+      throw new BadRequestException("Una campagna ricorrente richiede una data di primo invio");
+    }
 
     const campaign = await this.prisma.campaign.create({
       data: {
@@ -108,21 +124,90 @@ export class CampaignsService {
         name: input.name,
         segmentId: input.segmentId,
         templateId: input.templateId,
+        variantBTemplateId: input.variantBTemplateId ?? null,
         status: input.scheduledAt ? "SCHEDULED" : "DRAFT",
         scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : null,
         variableMapping: input.variableMapping as unknown as object,
+        recurrence: input.recurrence,
+        recurrenceEndAt: input.recurrenceEndAt ? new Date(input.recurrenceEndAt) : null,
       },
-      include: { template: true, segment: { include: { contacts: true } } },
+      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
     });
 
     return this.toOutput(campaign);
+  }
+
+  // Tool: campaigns.duplicate — riparte da zero come bozza: nome, segmento,
+  // template e mappatura variabili copiati, nessuna programmazione né
+  // ricorrenza ereditata (l'utente le decide di nuovo consapevolmente).
+  async duplicateCampaign(input: DuplicateCampaignInput): Promise<CampaignOutput> {
+    const original = await this.prisma.campaign.findFirst({
+      where: { id: input.campaignId, teamId: input.teamId },
+    });
+    if (!original) throw new NotFoundException("Campaign not found");
+
+    const copy = await this.prisma.campaign.create({
+      data: {
+        teamId: input.teamId,
+        name: `Copia di ${original.name}`,
+        segmentId: original.segmentId,
+        templateId: original.templateId,
+        variantBTemplateId: original.variantBTemplateId,
+        variableMapping: original.variableMapping as object,
+        status: "DRAFT",
+      },
+      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+    });
+
+    return this.toOutput(copy);
+  }
+
+  // Tool: campaigns.abTestResults
+  async abTestResults(input: ABTestResultsInput): Promise<ABTestResultsOutput> {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: input.campaignId, teamId: input.teamId },
+      include: { template: true, variantBTemplate: true, messages: true },
+    });
+    if (!campaign) throw new NotFoundException("Campaign not found");
+
+    const clickCounts = await this.prisma.attributionEvent.groupBy({
+      by: ["messageId"],
+      where: { kind: "clicked", message: { campaignId: campaign.id } },
+      _count: { _all: true },
+    });
+    const clickedMessageIds = new Set(clickCounts.map((c) => c.messageId));
+
+    const variantStats = (variant: "A" | "B" | null, templateId: string, templateName: string): ABVariantStats => {
+      const messages = campaign.messages.filter((m) => (variant === "A" ? m.abVariant !== "B" : m.abVariant === "B"));
+      const sent = messages.filter((m) => m.status !== "QUEUED").length;
+      const delivered = messages.filter((m) => DELIVERED_STATUSES.includes(m.status)).length;
+      const read = messages.filter((m) => m.status === "READ").length;
+      const clicked = messages.filter((m) => clickedMessageIds.has(m.id)).length;
+      return {
+        templateId,
+        templateName,
+        sent,
+        delivered,
+        read,
+        clicked,
+        deliveryRate: rate(delivered, sent),
+        readRate: rate(read, delivered),
+      };
+    };
+
+    return {
+      variantA: variantStats(campaign.variantBTemplateId ? "A" : null, campaign.templateId, campaign.template.name),
+      variantB: campaign.variantBTemplate
+        ? variantStats("B", campaign.variantBTemplateId!, campaign.variantBTemplate.name)
+        : null,
+    };
   }
 
   // Tool: campaigns.list
   async listCampaigns(input: ListCampaignsInput): Promise<CampaignOutput[]> {
     const campaigns = await this.prisma.campaign.findMany({
       where: { teamId: input.teamId },
-      include: { template: true, segment: { include: { contacts: true } } },
+      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
       orderBy: { createdAt: "desc" },
     });
     return campaigns.map((c) => this.toOutput(c));
@@ -140,8 +225,8 @@ export class CampaignsService {
 
     const updated = await this.prisma.campaign.update({
       where: { id: campaign.id },
-      data: { status: "DRAFT", scheduledAt: null },
-      include: { template: true, segment: { include: { contacts: true } } },
+      data: { status: "DRAFT", scheduledAt: null, recurrence: "NONE", recurrenceEndAt: null },
+      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
     });
     return this.toOutput(updated);
   }
@@ -171,21 +256,31 @@ export class CampaignsService {
       );
     }
 
-    await this.deliverCampaign(campaign.id);
-
-    const refreshed = await this.prisma.campaign.update({
+    await this.prisma.campaign.update({
       where: { id: campaign.id },
       data: { acceptedCostEstimateTotal: input.acceptedCostEstimateTotal },
-      include: { template: true, segment: { include: { contacts: true } } },
+    });
+    await this.deliverCampaign(campaign.id);
+
+    const refreshed = await this.prisma.campaign.findUniqueOrThrow({
+      where: { id: campaign.id },
+      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
     });
     return this.toOutput(refreshed);
   }
 
-  // Invio effettivo, condiviso fra invio immediato e invio programmato.
+  // Invio effettivo, condiviso fra invio immediato e invio programmato. Se
+  // la campagna ha una variante B, i destinatari vengono divisi a metà (a
+  // caso) fra le due; se ha una ricorrenza, alla fine genera la prossima
+  // occorrenza come nuova campagna programmata.
   async deliverCampaign(campaignId: string): Promise<void> {
     const campaign = await this.prisma.campaign.findUnique({
       where: { id: campaignId },
-      include: { segment: { include: { contacts: { include: { contact: true } } } }, template: true },
+      include: {
+        segment: { include: { contacts: { include: { contact: true } } } },
+        template: true,
+        variantBTemplate: true,
+      },
     });
     if (!campaign) return;
 
@@ -197,18 +292,21 @@ export class CampaignsService {
     await this.prisma.campaign.update({ where: { id: campaign.id }, data: { status: "SENDING" } });
 
     const mapping = (campaign.variableMapping as unknown as VariableSource[]) ?? [];
+    const recipients = splitForABTest(campaign.segment.contacts, !!campaign.variantBTemplate);
     let failures = 0;
 
-    for (const { contact } of campaign.segment.contacts) {
+    for (const { contact, variant } of recipients) {
+      const template = variant === "B" && campaign.variantBTemplate ? campaign.variantBTemplate : campaign.template;
       try {
-        const rendered = renderTemplate(campaign.template.bodyText, mapping, contact);
+        const rendered = renderTemplate(template.bodyText, mapping, contact);
         const conversation = await this.getOrCreateConversation(campaign.teamId, contact.id);
         const message = await this.prisma.message.create({
           data: {
             conversationId: conversation.id,
             campaignId: campaign.id,
+            abVariant: campaign.variantBTemplate ? variant : null,
             direction: "OUTBOUND",
-            category: campaign.template.category,
+            category: template.category,
             // Il testo salvato è quello personalizzato per questo destinatario.
             text: rendered.text,
             status: "QUEUED",
@@ -219,10 +317,10 @@ export class CampaignsService {
           phoneNumberId: waConnection.phoneNumberId,
           accessToken: waConnection.accessTokenEncrypted, // decrypt in a real KMS-backed impl
           toE164: contact.phoneE164,
-          templateName: campaign.template.name,
-          language: campaign.template.language,
+          templateName: template.name,
+          language: template.language,
           variables: rendered.values,
-          category: campaign.template.category,
+          category: template.category,
         });
 
         await this.prisma.message.update({
@@ -242,6 +340,52 @@ export class CampaignsService {
       where: { id: campaign.id },
       data: { status: failures === total && total > 0 ? "FAILED" : "SENT", sentAt: new Date() },
     });
+
+    if (campaign.recurrence !== "NONE") {
+      await this.scheduleNextOccurrence(campaign);
+    }
+  }
+
+  // Crea la prossima occorrenza di una campagna ricorrente come riga a sé,
+  // così ogni invio mantiene le proprie statistiche separate.
+  private async scheduleNextOccurrence(campaign: {
+    id: string;
+    teamId: string;
+    name: string;
+    segmentId: string;
+    templateId: string;
+    variantBTemplateId: string | null;
+    variableMapping: unknown;
+    scheduledAt: Date | null;
+    recurrence: string;
+    recurrenceEndAt: Date | null;
+  }): Promise<void> {
+    const base = campaign.scheduledAt ?? new Date();
+    const next = new Date(base);
+    if (campaign.recurrence === "DAILY") next.setDate(next.getDate() + 1);
+    else if (campaign.recurrence === "WEEKLY") next.setDate(next.getDate() + 7);
+    else if (campaign.recurrence === "MONTHLY") next.setMonth(next.getMonth() + 1);
+    else return;
+
+    if (campaign.recurrenceEndAt && next > campaign.recurrenceEndAt) {
+      this.logger.log(`Ricorrenza di "${campaign.name}" conclusa (oltre la data di fine impostata)`);
+      return;
+    }
+
+    await this.prisma.campaign.create({
+      data: {
+        teamId: campaign.teamId,
+        name: campaign.name,
+        segmentId: campaign.segmentId,
+        templateId: campaign.templateId,
+        variantBTemplateId: campaign.variantBTemplateId,
+        variableMapping: campaign.variableMapping as object,
+        status: "SCHEDULED",
+        scheduledAt: next,
+        recurrence: campaign.recurrence,
+        recurrenceEndAt: campaign.recurrenceEndAt,
+      },
+    });
   }
 
   private async getOrCreateConversation(teamId: string, contactId: string) {
@@ -257,7 +401,10 @@ export class CampaignsService {
     scheduledAt: Date | null;
     sentAt: Date | null;
     createdAt: Date;
+    recurrence: string;
+    recurrenceEndAt: Date | null;
     template: { name: string };
+    variantBTemplate: { name: string } | null;
     segment: { name: string; contacts: unknown[] };
   }): CampaignOutput {
     return {
@@ -270,6 +417,31 @@ export class CampaignsService {
       templateName: campaign.template.name,
       segmentName: campaign.segment.name,
       createdAt: campaign.createdAt.toISOString(),
+      variantBTemplateName: campaign.variantBTemplate?.name ?? null,
+      recurrence: campaign.recurrence as CampaignOutput["recurrence"],
+      recurrenceEndAt: campaign.recurrenceEndAt ? campaign.recurrenceEndAt.toISOString() : null,
     };
   }
+}
+
+function rate(part: number, whole: number): number {
+  if (whole === 0) return 0;
+  return Number(((part / whole) * 100).toFixed(1));
+}
+
+// Divide i destinatari a metà in modo deterministico sull'id del contatto
+// (non a runtime-random), così rilanciare l'invio dopo un errore parziale
+// non rimescola le assegnazioni già fatte.
+function splitForABTest<T extends { contact: { id: string } }>(
+  entries: T[],
+  hasVariantB: boolean,
+): (T & { variant: "A" | "B" })[] {
+  if (!hasVariantB) return entries.map((e) => ({ ...e, variant: "A" as const }));
+  return entries.map((e) => ({ ...e, variant: hashToBucket(e.contact.id) }));
+}
+
+function hashToBucket(id: string): "A" | "B" {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  return Math.abs(hash) % 2 === 0 ? "A" : "B";
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Nav } from "@/components/nav";
 import { callTool, decodeTeamId } from "@/lib/api";
 
@@ -38,6 +38,23 @@ interface CampaignOutput {
   templateName: string;
   segmentName: string;
   createdAt: string;
+  variantBTemplateName: string | null;
+  recurrence: "NONE" | "DAILY" | "WEEKLY" | "MONTHLY";
+  recurrenceEndAt: string | null;
+}
+interface ABVariantStats {
+  templateId: string;
+  templateName: string;
+  sent: number;
+  delivered: number;
+  read: number;
+  clicked: number;
+  deliveryRate: number;
+  readRate: number;
+}
+interface ABTestResults {
+  variantA: ABVariantStats;
+  variantB: ABVariantStats | null;
 }
 interface PreviewRow {
   contactId: string;
@@ -158,6 +175,9 @@ function CampaignBuilder({
   const [mapping, setMapping] = useState<VariableSource[]>([]);
   const [scheduleEnabled, setScheduleEnabled] = useState(false);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [variantBTemplateId, setVariantBTemplateId] = useState("");
+  const [recurrence, setRecurrence] = useState<"NONE" | "DAILY" | "WEEKLY" | "MONTHLY">("NONE");
+  const [recurrenceEndAt, setRecurrenceEndAt] = useState("");
   const [estimate, setEstimate] = useState<CostEstimateOutput | null>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -257,6 +277,11 @@ function CampaignBuilder({
         templateId,
         variableMapping: mapping,
         scheduledAt: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
+        variantBTemplateId: variantBTemplateId || undefined,
+        recurrence: scheduleEnabled ? recurrence : "NONE",
+        recurrenceEndAt: scheduleEnabled && recurrence !== "NONE" && recurrenceEndAt
+          ? new Date(recurrenceEndAt).toISOString()
+          : undefined,
       });
 
       if (sendNow) {
@@ -361,7 +386,7 @@ function CampaignBuilder({
         </div>
 
         <label className="text-sm sm:col-span-2">
-          <span className="mb-1 block text-gray-600">Template approvato</span>
+          <span className="mb-1 block text-gray-600">Template (variante A)</span>
           <select
             value={templateId}
             onChange={(e) => setTemplateId(e.target.value)}
@@ -373,6 +398,26 @@ function CampaignBuilder({
                 {t.name} · {t.category} · {t.language}
               </option>
             ))}
+          </select>
+        </label>
+
+        <label className="text-sm sm:col-span-3">
+          <span className="mb-1 block text-gray-600">
+            Test A/B: variante B (opzionale — metà dei destinatari a caso la riceve al posto della A)
+          </span>
+          <select
+            value={variantBTemplateId}
+            onChange={(e) => setVariantBTemplateId(e.target.value)}
+            className="w-full rounded border px-3 py-2 text-sm"
+          >
+            <option value="">Nessuna — invio normale</option>
+            {approvedTemplates
+              .filter((t) => t.id !== templateId)
+              .map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} · {t.category} · {t.language}
+                </option>
+              ))}
           </select>
         </label>
       </div>
@@ -504,6 +549,35 @@ function CampaignBuilder({
         )}
       </div>
 
+      {scheduleEnabled && (
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm">
+            <span className="mb-1 block text-gray-600">Ripeti</span>
+            <select
+              value={recurrence}
+              onChange={(e) => setRecurrence(e.target.value as typeof recurrence)}
+              className="rounded border px-2 py-1.5 text-sm"
+            >
+              <option value="NONE">Non ripetere</option>
+              <option value="DAILY">Ogni giorno</option>
+              <option value="WEEKLY">Ogni settimana</option>
+              <option value="MONTHLY">Ogni mese</option>
+            </select>
+          </label>
+          {recurrence !== "NONE" && (
+            <label className="text-sm">
+              <span className="mb-1 block text-gray-600">Fino al (opzionale)</span>
+              <input
+                type="date"
+                value={recurrenceEndAt}
+                onChange={(e) => setRecurrenceEndAt(e.target.value)}
+                className="rounded border px-2 py-1.5 text-sm"
+              />
+            </label>
+          )}
+        </div>
+      )}
+
       {preview && (
         <div className="rounded border">
           <div className="border-b bg-gray-50 px-3 py-1.5 text-xs uppercase text-gray-500">
@@ -585,6 +659,9 @@ function CampaignList({
   onChanged: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [openResultsId, setOpenResultsId] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, ABTestResults>>({});
 
   async function cancel(campaignId: string) {
     setError(null);
@@ -593,6 +670,36 @@ function CampaignList({
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Annullamento fallito");
+    }
+  }
+
+  async function duplicate(campaignId: string) {
+    setError(null);
+    setBusyId(campaignId);
+    try {
+      await callTool("/campaigns/duplicate", { teamId, campaignId });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Duplicazione fallita");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function toggleResults(campaignId: string) {
+    if (openResultsId === campaignId) {
+      setOpenResultsId(null);
+      return;
+    }
+    setError(null);
+    setOpenResultsId(campaignId);
+    if (!results[campaignId]) {
+      try {
+        const data = await callTool<ABTestResults>("/campaigns/ab-test-results", { teamId, campaignId });
+        setResults((prev) => ({ ...prev, [campaignId]: data }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Impossibile caricare i risultati del test A/B");
+      }
     }
   }
 
@@ -613,29 +720,67 @@ function CampaignList({
           </thead>
           <tbody>
             {campaigns.map((c) => (
-              <tr key={c.id} className="border-t">
-                <td className="px-3 py-2 font-medium">{c.name}</td>
-                <td className="px-3 py-2 text-gray-600">{c.segmentName}</td>
-                <td className="px-3 py-2 text-gray-600">{c.templateName}</td>
-                <td className="px-3 py-2">{c.recipientCount}</td>
-                <td className="px-3 py-2">
-                  <StatusBadge status={c.status} />
-                </td>
-                <td className="px-3 py-2 text-xs text-gray-500">
-                  {c.sentAt
-                    ? `Inviata ${new Date(c.sentAt).toLocaleString("it-IT")}`
-                    : c.scheduledAt
-                      ? `Programmata ${new Date(c.scheduledAt).toLocaleString("it-IT")}`
-                      : `Creata ${new Date(c.createdAt).toLocaleDateString("it-IT")}`}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {c.status === "SCHEDULED" && (
-                    <button onClick={() => cancel(c.id)} className="text-xs text-gray-500 underline">
-                      annulla
+              <Fragment key={c.id}>
+                <tr className="border-t">
+                  <td className="px-3 py-2 font-medium">{c.name}</td>
+                  <td className="px-3 py-2 text-gray-600">{c.segmentName}</td>
+                  <td className="px-3 py-2 text-gray-600">
+                    {c.templateName}
+                    {c.variantBTemplateName && (
+                      <span className="ml-1 text-xs text-gray-400">(A/B: {c.variantBTemplateName})</span>
+                    )}
+                    {c.recurrence !== "NONE" && (
+                      <span className="ml-1 rounded bg-purple-50 px-1.5 py-0.5 text-xs text-purple-700">
+                        {c.recurrence === "DAILY" ? "giornaliera" : c.recurrence === "WEEKLY" ? "settimanale" : "mensile"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">{c.recipientCount}</td>
+                  <td className="px-3 py-2">
+                    <StatusBadge status={c.status} />
+                  </td>
+                  <td className="px-3 py-2 text-xs text-gray-500">
+                    {c.sentAt
+                      ? `Inviata ${new Date(c.sentAt).toLocaleString("it-IT")}`
+                      : c.scheduledAt
+                        ? `Programmata ${new Date(c.scheduledAt).toLocaleString("it-IT")}`
+                        : `Creata ${new Date(c.createdAt).toLocaleDateString("it-IT")}`}
+                  </td>
+                  <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
+                    {c.status === "SCHEDULED" && (
+                      <button onClick={() => cancel(c.id)} className="text-xs text-gray-500 underline">
+                        annulla
+                      </button>
+                    )}
+                    {c.variantBTemplateName && c.status === "SENT" && (
+                      <button
+                        onClick={() => toggleResults(c.id)}
+                        className="text-xs text-brand-dark underline"
+                      >
+                        {openResultsId === c.id ? "nascondi A/B" : "risultati A/B"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => duplicate(c.id)}
+                      disabled={busyId === c.id}
+                      className="text-xs text-gray-500 underline disabled:opacity-40"
+                    >
+                      duplica
                     </button>
-                  )}
-                </td>
-              </tr>
+                  </td>
+                </tr>
+                {openResultsId === c.id && (
+                  <tr className="border-t bg-gray-50">
+                    <td colSpan={7} className="px-3 py-3">
+                      {results[c.id] ? (
+                        <ABResultsTable data={results[c.id]} />
+                      ) : (
+                        <p className="text-xs text-gray-400">Caricamento risultati…</p>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {campaigns.length === 0 && (
               <tr>
@@ -649,6 +794,40 @@ function CampaignList({
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </section>
+  );
+}
+
+function ABResultsTable({ data }: { data: ABTestResults }) {
+  const rows = [data.variantA, ...(data.variantB ? [data.variantB] : [])];
+  return (
+    <table className="w-full max-w-2xl text-left text-xs">
+      <thead className="text-gray-500">
+        <tr>
+          <th className="py-1 pr-4">Variante</th>
+          <th className="py-1 pr-4">Inviati</th>
+          <th className="py-1 pr-4">Consegnati</th>
+          <th className="py-1 pr-4">Letti</th>
+          <th className="py-1 pr-4">Click</th>
+          <th className="py-1 pr-4">% consegna</th>
+          <th className="py-1 pr-4">% lettura</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, i) => (
+          <tr key={r.templateId} className="border-t">
+            <td className="py-1 pr-4 font-medium">
+              {i === 0 ? "A" : "B"} — {r.templateName}
+            </td>
+            <td className="py-1 pr-4">{r.sent}</td>
+            <td className="py-1 pr-4">{r.delivered}</td>
+            <td className="py-1 pr-4">{r.read}</td>
+            <td className="py-1 pr-4">{r.clicked}</td>
+            <td className="py-1 pr-4">{(r.deliveryRate * 100).toFixed(1)}%</td>
+            <td className="py-1 pr-4">{(r.readRate * 100).toFixed(1)}%</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
