@@ -71,6 +71,8 @@ Per testare il flusso end-to-end senza un WABA reale:
 
 Per collegare un vero numero WhatsApp di test (gratuito, via Meta for Developers) invece del seed fittizio, usa `pnpm --filter @spokkio/api prisma:connect-whatsapp` — vedi `docs/SETUP_MAC.md` per i passaggi completi lato Meta.
 
+Per lanciare i test automatici (flusso campagne e ingest webhook, con Meta Cloud API e Postgres entrambi mockati — non serve un database in esecuzione): `pnpm --filter @spokkio/api test`.
+
 ## Flusso verticale Fase 1 implementato
 
 Onboarding guidato → import contatti + segmentazione a tag → creazione template → simulatore di costo trasparente → creazione e invio campagna broadcast → inbox condivisa multi-operatore → analytics con drill-down → 3 automazioni pronte all'uso (promemoria appuntamento, follow-up post-visita, richiamo cliente inattivo).

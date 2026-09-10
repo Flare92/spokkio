@@ -38,6 +38,12 @@ export class WebhookIngestService {
     const status = STATUS_MAP[event.status];
     if (!status) return;
 
+    // Meta's webhook delivery is at-least-once: the same status notification
+    // can arrive more than once. Without this guard a resend would create a
+    // duplicate AttributionEvent each time, inflating delivered/read/clicked
+    // counts in analytics even though nothing new actually happened.
+    if (message.status === status) return;
+
     await this.prisma.message.update({
       where: { id: message.id },
       data: {

@@ -22,7 +22,8 @@
 
 ## Test
 
-- Nessun test automatico ancora scritto. Prioritario prima di ogni release: test di integrazione sul flusso campagne (estimate → create → send con mock di Meta Cloud API) e sul webhook ingest (idempotenza, stati di consegna).
+- `pnpm --filter @spokkio/api test` copre ora il flusso campagne (`campaigns.service.spec.ts`: stima costi, rifiuto template non approvato, invio con stima non più valida, invio riuscito/fallito, sostituzione dei link tracciati) e l'ingest webhook (`webhook-ingest.service.spec.ts`: stati di consegna, idempotenza su notifiche duplicate, messaggi in ingresso, stato template) — tutti mock su `PrismaService`/`WhatsAppService`, nessun Postgres reale richiesto per farli girare.
+- Non ancora collegati a una pipeline CI (vedi sezione Infrastruttura): oggi vanno lanciati a mano prima di ogni release.
 - Nessun test di sync bidirezionale CRM — normale, perché nessuna integrazione CRM esiste ancora in Fase 1, ma è un requisito esplicito del documento di prodotto per quando arriveranno HubSpot/Salesforce/ActiveCampaign in Fase 2.
 
 ## Infrastruttura
