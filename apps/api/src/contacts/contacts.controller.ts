@@ -12,8 +12,10 @@ import {
   FindDuplicateContactsInput,
   MergeContactsInput,
   ExportContactsInput,
+  FetchGoogleSheetInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
+import { GoogleSheetService } from "./google-sheet.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
 import { TeamScopeGuard } from "../auth/team-scope.guard";
@@ -23,7 +25,10 @@ import { TeamScopeGuard } from "../auth/team-scope.guard";
 @UseGuards(JwtAuthGuard, TeamScopeGuard)
 @Controller("contacts")
 export class ContactsController {
-  constructor(private readonly contacts: ContactsService) {}
+  constructor(
+    private readonly contacts: ContactsService,
+    private readonly googleSheet: GoogleSheetService,
+  ) {}
 
   // tool: contacts.import
   @Post("import")
@@ -97,5 +102,11 @@ export class ContactsController {
   @Post("export")
   export(@Body(new ZodValidationPipe(ExportContactsInput)) body: ExportContactsInput) {
     return this.contacts.exportContacts(body);
+  }
+
+  // tool: contacts.fetchGoogleSheet
+  @Post("google-sheet")
+  fetchGoogleSheet(@Body(new ZodValidationPipe(FetchGoogleSheetInput)) body: FetchGoogleSheetInput) {
+    return this.googleSheet.fetch(body);
   }
 }

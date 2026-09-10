@@ -171,6 +171,9 @@ function FileImportSection({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [parsed, setParsed] = useState<ParsedFile | null>(null);
   const [fileName, setFileName] = useState("");
+  const [sourceType, setSourceType] = useState<"CSV" | "XLSX" | "GOOGLE_SHEETS">("CSV");
+  const [sheetUrl, setSheetUrl] = useState("");
+  const [sheetBusy, setSheetBusy] = useState(false);
   const [mapping, setMapping] = useState<ColumnMapping>({ fields: {}, customColumns: [] });
   const [countryCode, setCountryCode] = useState("+39");
   const [extraTags, setExtraTags] = useState("");
@@ -197,12 +200,36 @@ function FileImportSection({
         setError("Il file non contiene righe leggibili.");
         return;
       }
+      setSourceType(/\.(xlsx|xls)$/i.test(file.name) ? "XLSX" : "CSV");
       setParsed(data);
       setFileName(file.name);
       setMapping({ fields: guessMapping(data.headers), customColumns: [] });
       setSelected(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Impossibile leggere il file");
+    }
+  }
+
+  async function handleGoogleSheet() {
+    if (!sheetUrl.trim()) return;
+    setSheetBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const data = await callTool<ParsedFile>("/contacts/google-sheet", { teamId, url: sheetUrl.trim() });
+      if (data.rows.length === 0) {
+        setError("Il foglio non contiene righe leggibili.");
+        return;
+      }
+      setSourceType("GOOGLE_SHEETS");
+      setParsed(data);
+      setFileName("Google Sheets");
+      setMapping({ fields: guessMapping(data.headers), customColumns: [] });
+      setSelected(new Set());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Impossibile leggere il foglio");
+    } finally {
+      setSheetBusy(false);
     }
   }
 
@@ -276,7 +303,7 @@ function FileImportSection({
           "/contacts/import",
           {
             teamId,
-            source: /\.(xlsx|xls)$/i.test(fileName) ? "XLSX" : "CSV",
+            source: sourceType,
             updateExisting,
             rows: batch,
           },
@@ -326,6 +353,27 @@ function FileImportSection({
           onChange={handleFile}
           className="block w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-brand-dark file:px-4 file:py-2 file:text-sm file:font-medium file:text-white"
         />
+
+        <div className="mt-3 flex items-center gap-2 border-t pt-3">
+          <span className="text-xs text-gray-500">oppure Google Sheets:</span>
+          <input
+            value={sheetUrl}
+            onChange={(e) => setSheetUrl(e.target.value)}
+            placeholder="https://docs.google.com/spreadsheets/d/..."
+            className="flex-1 rounded border px-2 py-1.5 text-sm"
+          />
+          <button
+            type="button"
+            onClick={handleGoogleSheet}
+            disabled={sheetBusy || !sheetUrl.trim()}
+            className="rounded border px-3 py-1.5 text-sm disabled:opacity-40"
+          >
+            {sheetBusy ? "Carico…" : "Carica"}
+          </button>
+        </div>
+        <p className="mt-1 text-xs text-gray-400">
+          Il foglio deve essere condiviso come "Chiunque abbia il link" → "Visualizzatore".
+        </p>
 
         {parsed && (
           <div className="mt-5 space-y-6">

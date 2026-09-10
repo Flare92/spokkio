@@ -204,6 +204,23 @@ export const ExportContactsOutput = z.object({
 });
 export type ExportContactsOutput = z.infer<typeof ExportContactsOutput>;
 
+// Non richiede un'app OAuth Google: funziona su qualunque foglio condiviso
+// come "chiunque abbia il link può visualizzare", scaricato lato server come
+// CSV per evitare i problemi di CORS di un fetch diretto dal browser, e
+// restituito nella stessa forma di un file CSV caricato — così alimenta
+// esattamente lo stesso flusso di mappatura/categorie/anteprima.
+export const FetchGoogleSheetInput = z.object({
+  teamId: z.string().uuid(),
+  url: z.string().url(),
+});
+export type FetchGoogleSheetInput = z.infer<typeof FetchGoogleSheetInput>;
+
+export const FetchGoogleSheetOutput = z.object({
+  headers: z.array(z.string()),
+  rows: z.array(z.record(z.string())),
+});
+export type FetchGoogleSheetOutput = z.infer<typeof FetchGoogleSheetOutput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
@@ -220,4 +237,5 @@ export const CONTACTS_TOOLS = {
   "contacts.findDuplicates": { input: FindDuplicateContactsInput, output: z.array(DuplicateGroup) },
   "contacts.merge": { input: MergeContactsInput, output: ContactOutput },
   "contacts.export": { input: ExportContactsInput, output: ExportContactsOutput },
+  "contacts.fetchGoogleSheet": { input: FetchGoogleSheetInput, output: FetchGoogleSheetOutput },
 } as const;
