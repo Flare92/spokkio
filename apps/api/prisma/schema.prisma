@@ -86,6 +86,7 @@ model Team {
   subscription        Subscription?
   usagePeriods        UsagePeriod[]
   appointments        Appointment[]
+  cannedResponses     CannedResponse[]
 
   @@map("teams")
 }
@@ -256,6 +257,8 @@ model Conversation {
   contactId          String
   assignedOperator   User?     @relation("AssignedOperator", fields: [assignedOperatorId], references: [id])
   assignedOperatorId String?
+  // Etichette libere per organizzare l'inbox (es. "urgente", "da richiamare").
+  labels             String[]  @default([])
   closedAt           DateTime?
   createdAt          DateTime  @default(now())
 
@@ -263,6 +266,21 @@ model Conversation {
 
   @@index([teamId])
   @@map("conversations")
+}
+
+// Risposte rapide riutilizzabili dagli operatori nell'inbox: uno shortcut
+// (es. "grazie") che si espande nel testo completo salvato.
+model CannedResponse {
+  id        String   @id @default(uuid())
+  team      Team     @relation(fields: [teamId], references: [id])
+  teamId    String
+  shortcut  String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, shortcut])
+  @@index([teamId])
+  @@map("canned_responses")
 }
 
 model Message {
