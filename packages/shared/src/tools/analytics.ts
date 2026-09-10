@@ -105,6 +105,25 @@ export const CampaignPerformanceOutput = z.array(
 );
 export type CampaignPerformanceOutput = z.infer<typeof CampaignPerformanceOutput>;
 
+// "A rischio" = un contatto che ha già avuto almeno una conversazione reale
+// (non un contatto appena importato e mai contattato) ma che non dà segnali
+// di attività (risposte, visite) da più del periodo scelto.
+export const AtRiskCustomersInput = z.object({
+  teamId: z.string().uuid(),
+  inactivityDays: z.number().int().min(1).max(365).default(45),
+});
+export type AtRiskCustomersInput = z.infer<typeof AtRiskCustomersInput>;
+
+export const AtRiskCustomerOutput = z.object({
+  contactId: z.string().uuid(),
+  name: z.string().nullable(),
+  phoneE164: z.string(),
+  categories: z.array(z.string()),
+  lastActivityAt: z.string().datetime(),
+  daysSinceActivity: z.number().int(),
+});
+export type AtRiskCustomerOutput = z.infer<typeof AtRiskCustomerOutput>;
+
 export const ANALYTICS_TOOLS = {
   "analytics.campaignStats": { input: CampaignStatsInput, output: CampaignStatsOutput },
   "analytics.campaignEventDrilldown": {
@@ -114,4 +133,5 @@ export const ANALYTICS_TOOLS = {
   "analytics.overview": { input: AnalyticsRangeInput, output: AnalyticsOverviewOutput },
   "analytics.timeSeries": { input: AnalyticsRangeInput, output: AnalyticsTimeSeriesOutput },
   "analytics.campaignPerformance": { input: AnalyticsRangeInput, output: CampaignPerformanceOutput },
+  "analytics.atRiskCustomers": { input: AtRiskCustomersInput, output: z.array(AtRiskCustomerOutput) },
 } as const;

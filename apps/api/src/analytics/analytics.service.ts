@@ -8,11 +8,17 @@ import type {
   AnalyticsOverviewOutput,
   AnalyticsTimeSeriesOutput,
   CampaignPerformanceOutput,
+  AtRiskCustomersInput,
+  AtRiskCustomerOutput,
   MessageCategory,
 } from "@spokkio/shared";
 import { MessageCategoryValues } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
-import { META_CONVERSATION_RATE_EUR_IT, PLATFORM_MARKUP_EUR } from "../campaigns/pricing";
+import {
+  META_CONVERSATION_RATE_EUR_IT,
+  PLATFORM_MARKUP_EUR,
+  computeBillableConversationsByCategory,
+} from "../campaigns/pricing";
 
 const DELIVERED_STATUSES = ["DELIVERED", "READ"];
 
@@ -70,7 +76,7 @@ export class AnalyticsService {
     const [messages, inboundMessages, activeConversations] = await Promise.all([
       this.prisma.message.findMany({
         where: { direction: "OUTBOUND", createdAt: { gte: since }, conversation: { teamId: input.teamId } },
-        select: { status: true, category: true },
+        select: { status: true, category: true, createdAt: true, conversation: { select: { contactId: true } } },
       }),
       this.prisma.message.count({
         where: { direction: "INBOUND", createdAt: { gte: since }, conversation: { teamId: input.teamId } },
@@ -91,14 +97,25 @@ export class AnalyticsService {
     const read = messages.filter((m) => m.status === "READ").length;
     const failed = messages.filter((m) => m.status === "FAILED").length;
 
-    // Meta fattura per conversazione avviata, non per messaggio: qui contiamo
-    // i messaggi effettivamente partiti raggruppati per categoria, che è
-    // l'approssimazione onesta finché non leggiamo i costi reali dalle API di
-    // fatturazione di Meta (vedi docs/RISKS.md).
+    // Meta fattura una conversazione per finestra di 24h aperta per
+    // (contatto, categoria), non per messaggio: due template marketing allo
+    // stesso contatto nella stessa giornata sono UNA sola conversazione
+    // fatturata, non due. Il conteggio qui sotto raggruppa i messaggi
+    // effettivamente partiti per contatto+categoria e ricostruisce le
+    // finestre reali, invece di contare ogni messaggio come se aprisse
+    // sempre una nuova conversazione (vedi docs/RISKS.md per i limiti
+    // residui rispetto a un'integrazione con le API di fatturazione Meta).
+    const billableMessages = messages
+      .filter((m) => m.status !== "QUEUED" && m.status !== "FAILED" && m.category)
+      .map((m) => ({
+        contactId: m.conversation.contactId,
+        category: m.category as MessageCategory,
+        createdAt: m.createdAt,
+      }));
+    const conversationsByCategory = computeBillableConversationsByCategory(billableMessages);
+
     const byCategory = MessageCategoryValues.map((category) => {
-      const conversations = messages.filter(
-        (m) => m.category === category && m.status !== "QUEUED" && m.status !== "FAILED",
-      ).length;
+      const conversations = conversationsByCategory[category as MessageCategory] ?? 0;
       const ratePerConversation = META_CONVERSATION_RATE_EUR_IT[category as MessageCategory];
       return {
         category,
@@ -213,6 +230,35 @@ export class AnalyticsService {
         costTotal: Number((billable * ratePerConversation).toFixed(2)),
       };
     });
+  }
+
+  // Tool: analytics.atRiskCustomers — un contatto entra in questa lista solo
+  // se ha già avuto almeno una conversazione reale (altrimenti è semplicemente
+  // "mai contattato", un problema diverso) e non dà segnali di attività da
+  // più del periodo scelto.
+  async atRiskCustomers(input: AtRiskCustomersInput): Promise<AtRiskCustomerOutput[]> {
+    const threshold = new Date();
+    threshold.setDate(threshold.getDate() - input.inactivityDays);
+
+    const contacts = await this.prisma.contact.findMany({
+      where: {
+        teamId: input.teamId,
+        lastActivityAt: { lt: threshold },
+        conversations: { some: {} },
+      },
+      orderBy: { lastActivityAt: "asc" },
+      take: 100,
+    });
+
+    const now = Date.now();
+    return contacts.map((c) => ({
+      contactId: c.id,
+      name: [c.firstName, c.lastName].filter(Boolean).join(" ") || null,
+      phoneE164: c.phoneE164,
+      categories: c.categories,
+      lastActivityAt: c.lastActivityAt.toISOString(),
+      daysSinceActivity: Math.floor((now - c.lastActivityAt.getTime()) / (24 * 60 * 60 * 1000)),
+    }));
   }
 
   private since(days: number): Date {

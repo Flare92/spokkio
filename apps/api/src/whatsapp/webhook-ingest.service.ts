@@ -82,6 +82,15 @@ export class WebhookIngestService {
       });
     }
 
+    // Un messaggio in arrivo è la prova più diretta che il contatto è ancora
+    // attivo: senza questo aggiornamento lastActivityAt restava fermo alla
+    // data di import per sempre, rendendo inutilizzabili sia il trigger di
+    // recupero inattivi sia il cruscotto "clienti a rischio".
+    await this.prisma.contact.update({
+      where: { id: contact.id },
+      data: { lastActivityAt: new Date() },
+    });
+
     await this.prisma.message.create({
       data: {
         conversationId: conversation.id,

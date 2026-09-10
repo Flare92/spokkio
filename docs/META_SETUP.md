@@ -63,6 +63,7 @@ Il token temporaneo dura 24 ore — per uso continuativo serve un token da un Sy
 - Verify token: il valore di `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in `apps/api/.env`
 - Iscriviti almeno ai campi `messages` e `message_template_status_update`
 - ngrok: **[ngrok.com](https://ngrok.com/)** → scarica e, per un authtoken permanente, **[dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)**
+- Imposta anche `PUBLIC_BASE_URL` in `apps/api/.env` sullo stesso indirizzo ngrok (es. `https://abcd1234.ngrok-free.app`, senza il path): è l'URL che i link tracciati nelle campagne usano per il redirect, e deve essere raggiungibile dal telefono del cliente perché i click risultino davvero in analytics.
 
 ## 8. Collega tutto a Spokkio e invia il primo messaggio di test
 

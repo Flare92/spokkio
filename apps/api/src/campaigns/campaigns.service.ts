@@ -19,6 +19,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { META_CONVERSATION_RATE_EUR_IT, PLATFORM_MARKUP_EUR } from "./pricing";
 import { countTemplateVariables, renderTemplate } from "./render";
+import { isTrackableUrl, buildTrackingUrl, newTrackingToken } from "./tracking-links";
 
 const DELIVERED_STATUSES = ["DELIVERED", "READ"];
 
@@ -313,13 +314,18 @@ export class CampaignsService {
           },
         });
 
+        const tracked = await this.trackLinks(campaign.teamId, message.id, contact.id, rendered.text, rendered.values);
+        if (tracked.text !== rendered.text) {
+          await this.prisma.message.update({ where: { id: message.id }, data: { text: tracked.text } });
+        }
+
         const result = await this.whatsapp.sendTemplateMessage({
           phoneNumberId: waConnection.phoneNumberId,
           accessToken: waConnection.accessTokenEncrypted, // decrypt in a real KMS-backed impl
           toE164: contact.phoneE164,
           templateName: template.name,
           language: template.language,
-          variables: rendered.values,
+          variables: tracked.values,
           category: template.category,
         });
 
@@ -386,6 +392,36 @@ export class CampaignsService {
         recurrenceEndAt: campaign.recurrenceEndAt,
       },
     });
+  }
+
+  // Ogni variabile del template che è di fatto un URL viene sostituita con
+  // un link di redirect univoco (per messaggio + contatto): è quello che
+  // rende "clicked" un dato reale invece di un contatore sempre a zero.
+  private async trackLinks(
+    teamId: string,
+    messageId: string,
+    contactId: string,
+    text: string,
+    values: string[],
+  ): Promise<{ text: string; values: string[] }> {
+    let finalText = text;
+    const finalValues = [...values];
+
+    for (let i = 0; i < values.length; i++) {
+      const value = values[i];
+      if (!isTrackableUrl(value)) continue;
+
+      const token = newTrackingToken();
+      await this.prisma.trackedLink.create({
+        data: { teamId, messageId, contactId, targetUrl: value, token },
+      });
+
+      const trackingUrl = buildTrackingUrl(token);
+      finalValues[i] = trackingUrl;
+      finalText = finalText.split(value).join(trackingUrl);
+    }
+
+    return { text: finalText, values: finalValues };
   }
 
   private async getOrCreateConversation(teamId: string, contactId: string) {

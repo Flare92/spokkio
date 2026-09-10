@@ -13,13 +13,12 @@
 ## Correttezza funzionale
 
 - **Import Google Sheets non implementato.** CSV ed Excel si importano da file nella UI; l'import diretto da Google Sheets (OAuth) è ancora solo nello schema del tool.
-- **Costi stimati, non fatturati.** I totali in analytics moltiplicano i messaggi partiti per la tariffa di categoria: Meta però fattura per *conversazione* (finestra 24h), quindi su più messaggi allo stesso contatto nella stessa finestra il totale reale è più basso. Va allineato leggendo i costi dalle API di fatturazione di Meta prima di mostrarli come dato contabile a un cliente.
-- **Click non tracciati automaticamente.** La metrica "click" legge gli eventi di attribution, ma nulla li genera ancora: serve il pixel di sito o i link tracciati previsti in roadmap.
+- **Costi ancora stimati, non fatturati.** Il totale in `analytics.overview` ora raggruppa i messaggi per contatto+categoria e ricostruisce le finestre di conversazione reali di Meta (24h), invece di contare ogni messaggio come una conversazione a sé — ma resta un ricalcolo lato nostro, non una lettura delle API di fatturazione Meta. Il "costo" mostrato per singola campagna in `analytics.campaignPerformance` resta invece un'attribuzione per-invio: se due campagne/automazioni raggiungono lo stesso contatto nella stessa finestra di 24h, la somma dei costi per-campagna può superare il totale reale (che viene invece calcolato correttamente in `analytics.overview`). Va allineato del tutto leggendo i costi dalle API di fatturazione di Meta prima di mostrarli come dato contabile a un cliente.
+- **Click tracciati solo sui link nelle variabili dei template.** `campaigns.service.ts` sostituisce ogni variabile che è un URL con un redirect univoco (`/t/:token`) che registra il click prima di rimandare al link reale — ma un link scritto come testo fisso nel corpo del template (non come variabile) non viene ancora tracciato.
 - **Onboarding "wizard con AI conversazionale"** richiesto dal documento di prodotto non è implementato: l'onboarding attuale è un form guidato in 2 passi, senza assistente conversazionale. È il gap più visibile rispetto alla visione §7.3 del master prompt.
 - **Integrazione Shopify/WooCommerce/Google Sheets/Zapier** (richiesta in Fase 1) non ancora costruita — nessun modulo dedicato esiste ancora.
 - **Rate card Meta hardcoded** in `apps/api/src/campaigns/pricing.ts` — va sincronizzata periodicamente con il listino ufficiale Meta (cambia nel tempo) o resa configurabile da un pannello admin.
 - **Cambi di piano/prezzo con preavviso ≥7 giorni**: lo schema (`Subscription.pendingChangeEffectiveAt`) esiste ma non c'è ancora nessun flusso che programmi o notifichi un cambio piano.
-- **Dashboard "clienti a rischio"** per il team di supporto (da §5 del documento di analisi) non implementata.
 
 ## Test
 

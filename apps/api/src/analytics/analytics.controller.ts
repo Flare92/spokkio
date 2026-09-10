@@ -1,5 +1,10 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { CampaignStatsInput, CampaignEventDrilldownInput, AnalyticsRangeInput } from "@spokkio/shared";
+import {
+  CampaignStatsInput,
+  CampaignEventDrilldownInput,
+  AnalyticsRangeInput,
+  AtRiskCustomersInput,
+} from "@spokkio/shared";
 import { AnalyticsService } from "./analytics.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -38,5 +43,11 @@ export class AnalyticsController {
   @Post("campaign-performance")
   campaignPerformance(@Body(new ZodValidationPipe(AnalyticsRangeInput)) body: AnalyticsRangeInput) {
     return this.analytics.campaignPerformance(body);
+  }
+
+  // tool: analytics.atRiskCustomers
+  @Post("at-risk-customers")
+  atRiskCustomers(@Body(new ZodValidationPipe(AtRiskCustomersInput)) body: AtRiskCustomersInput) {
+    return this.analytics.atRiskCustomers(body);
   }
 }

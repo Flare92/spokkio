@@ -87,6 +87,7 @@ model Team {
   usagePeriods        UsagePeriod[]
   appointments        Appointment[]
   cannedResponses     CannedResponse[]
+  trackedLinks        TrackedLink[]
 
   @@map("teams")
 }
@@ -303,10 +304,32 @@ model Message {
   failedReason   String?
 
   events AttributionEvent[]
+  trackedLinks TrackedLink[]
 
   @@index([conversationId])
   @@index([campaignId])
   @@map("messages")
+}
+
+// Un link tracciato è generato per ogni variabile di template che contiene
+// un URL: il cliente vede/clicca un redirect univoco per messaggio, così un
+// click è attribuibile a un contatto e un invio reali (non più un contatore
+// sempre a zero come prima di questa funzione).
+model TrackedLink {
+  id             String    @id @default(uuid())
+  token          String    @unique
+  team           Team      @relation(fields: [teamId], references: [id])
+  teamId         String
+  message        Message   @relation(fields: [messageId], references: [id])
+  messageId      String
+  contactId      String
+  targetUrl      String
+  clickCount     Int       @default(0)
+  firstClickedAt DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([teamId])
+  @@map("tracked_links")
 }
 
 // --- Booking (minimal, local-services vertical) ---------------------------
