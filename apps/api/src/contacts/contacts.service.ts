@@ -18,6 +18,10 @@ import type {
   MergeContactsInput,
   ExportContactsInput,
   ExportContactsOutput,
+  SplitContactFieldInput,
+  SplitContactFieldOutput,
+  RenameCustomFieldInput,
+  DeleteCustomFieldInput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -485,6 +489,95 @@ export class ContactsService {
     };
   }
 
+  // Tool: contacts.splitField — corregge un campo già popolato (standard o
+  // personalizzato) dividendolo in due sull'occorrenza del delimitatore: il
+  // caso tipico è un CSV che ha nome e cognome nella stessa colonna. Si
+  // applica a tutti i contatti del team, non a una selezione: è una
+  // correzione dello schema dei dati, non un'operazione su singoli contatti.
+  async splitField(input: SplitContactFieldInput): Promise<SplitContactFieldOutput> {
+    const contacts = await this.prisma.contact.findMany({ where: { teamId: input.teamId } });
+    let updated = 0;
+    let skipped = 0;
+
+    for (const contact of contacts) {
+      const customFields = (contact.customFields as Record<string, string>) ?? {};
+      const rawValue = isStandardContactField(input.sourceField)
+        ? (contact[input.sourceField] ?? "")
+        : (customFields[input.sourceField] ?? "");
+
+      if (!rawValue.trim()) {
+        skipped++;
+        continue;
+      }
+
+      const idx = rawValue.indexOf(input.delimiter);
+      const first = (idx === -1 ? rawValue : rawValue.slice(0, idx)).trim();
+      const second = (idx === -1 ? "" : rawValue.slice(idx + input.delimiter.length)).trim();
+
+      let nextFirstName = contact.firstName;
+      let nextLastName = contact.lastName;
+      let nextEmail = contact.email;
+      const nextCustomFields = { ...customFields };
+
+      const write = (key: string, value: string) => {
+        if (key === "firstName") nextFirstName = value;
+        else if (key === "lastName") nextLastName = value;
+        else if (key === "email") nextEmail = value;
+        else nextCustomFields[key] = value;
+      };
+      write(input.targetFirst, first);
+      write(input.targetSecond, second);
+
+      if (
+        input.deleteSourceField &&
+        !isStandardContactField(input.sourceField) &&
+        input.sourceField !== input.targetFirst &&
+        input.sourceField !== input.targetSecond
+      ) {
+        delete nextCustomFields[input.sourceField];
+      }
+
+      await this.prisma.contact.update({
+        where: { id: contact.id },
+        data: { firstName: nextFirstName, lastName: nextLastName, email: nextEmail, customFields: nextCustomFields },
+      });
+      updated++;
+    }
+
+    return { updated, skipped };
+  }
+
+  // Tool: contacts.renameCustomField
+  async renameCustomField(input: RenameCustomFieldInput): Promise<{ updated: number }> {
+    const contacts = await this.prisma.contact.findMany({ where: { teamId: input.teamId } });
+    let updated = 0;
+    for (const contact of contacts) {
+      const customFields = (contact.customFields as Record<string, string>) ?? {};
+      if (!(input.oldKey in customFields)) continue;
+
+      const { [input.oldKey]: value, ...rest } = customFields;
+      rest[input.newKey] = value;
+      await this.prisma.contact.update({ where: { id: contact.id }, data: { customFields: rest } });
+      updated++;
+    }
+    return { updated };
+  }
+
+  // Tool: contacts.deleteCustomField
+  async deleteCustomField(input: DeleteCustomFieldInput): Promise<{ updated: number }> {
+    const contacts = await this.prisma.contact.findMany({ where: { teamId: input.teamId } });
+    let updated = 0;
+    for (const contact of contacts) {
+      const customFields = (contact.customFields as Record<string, string>) ?? {};
+      if (!(input.key in customFields)) continue;
+
+      const { [input.key]: _removed, ...rest } = customFields;
+      await this.prisma.contact.update({ where: { id: contact.id }, data: { customFields: rest } });
+      updated++;
+    }
+    return { updated };
+  }
+
   private async findDuplicatesFor(
     contact: { id: string; teamId: string; phoneE164: string; firstName: string | null; lastName: string | null },
   ) {
@@ -623,4 +716,11 @@ function sameSet(a: { id: string }[], b: { id: string }[]): boolean {
 function csvEscape(value: string): string {
   if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
+}
+
+const STANDARD_CONTACT_FIELDS = ["firstName", "lastName", "email"] as const;
+type StandardContactField = (typeof STANDARD_CONTACT_FIELDS)[number];
+
+function isStandardContactField(key: string): key is StandardContactField {
+  return (STANDARD_CONTACT_FIELDS as readonly string[]).includes(key);
 }

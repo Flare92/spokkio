@@ -128,6 +128,12 @@ export default function ContactsPage() {
           onFilter={setCategoryFilter}
         />
 
+        <CustomFieldsSection
+          teamId={teamId}
+          availableCustomFields={list?.availableCustomFields ?? []}
+          onChanged={refreshAll}
+        />
+
         <ContactsTable
           teamId={teamId}
           list={list}
@@ -178,12 +184,14 @@ function FileImportSection({
   const [countryCode, setCountryCode] = useState("+39");
   const [extraTags, setExtraTags] = useState("");
   const [updateExisting, setUpdateExisting] = useState(true);
+  const [splitFullName, setSplitFullName] = useState(false);
 
   // Righe in revisione: qui l'utente assegna le categorie prima di importare.
   const [rows, setRows] = useState<ReviewRow[]>([]);
   const [invalid, setInvalid] = useState<{ row: number; reason: string }[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
+  const [bulkSubcategory, setBulkSubcategory] = useState("");
 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string | null>(null);
@@ -241,8 +249,14 @@ function FileImportSection({
     return normalizeRows(parsed.rows, mapping, {
       defaultCountryCode: countryCode,
       extraTags: extraTags.split(",").map((t) => t.trim()).filter(Boolean),
+      splitFullName,
     });
-  }, [parsed, mapping, countryCode, extraTags]);
+  }, [parsed, mapping, countryCode, extraTags, splitFullName]);
+
+  // Mostra l'opzione "dividi nome e cognome" solo quando ha senso: entrambi
+  // i campi mappati sulla stessa colonna del file.
+  const sameColumnForNameAndSurname =
+    !!mapping.fields.firstName && mapping.fields.firstName === mapping.fields.lastName;
 
   useEffect(() => {
     if (!normalized) {
@@ -261,13 +275,17 @@ function FileImportSection({
     setInvalid(normalized.invalid);
   }, [normalized]);
 
-  function assignCategoryTo(rowKeys: Set<string> | "all", rawCategory: string) {
+  function assignCategoryTo(rowKeys: Set<string> | "all", rawCategory: string, rawSubcategory = "") {
     const category = rawCategory.trim();
     if (!category) return;
+    const sub = rawSubcategory.trim();
+    // Come nel bulk-bar della lista contatti: una sottocategoria porta
+    // sempre con sé anche la categoria padre.
+    const toAdd = sub ? [category, `${category} > ${sub}`] : [category];
     setRows((prev) =>
       prev.map((row) =>
         rowKeys === "all" || rowKeys.has(row.rowKey)
-          ? { ...row, categories: Array.from(new Set([...row.categories, category])) }
+          ? { ...row, categories: Array.from(new Set([...row.categories, ...toAdd])) }
           : row,
       ),
     );
@@ -409,6 +427,17 @@ function FileImportSection({
                   </label>
                 ))}
               </div>
+              {sameColumnForNameAndSurname && (
+                <label className="mt-2 flex items-center gap-2 text-sm text-gray-600">
+                  <input
+                    type="checkbox"
+                    checked={splitFullName}
+                    onChange={(e) => setSplitFullName(e.target.checked)}
+                  />
+                  Nome e Cognome hanno la stessa colonna: dividi automaticamente sulla prima parola
+                  (es. "Mario Rossi" → Nome "Mario", Cognome "Rossi")
+                </label>
+              )}
             </div>
 
             {unmappedColumns.length > 0 && (
@@ -487,7 +516,7 @@ function FileImportSection({
                     list="known-categories"
                     value={bulkCategory}
                     onChange={(e) => setBulkCategory(e.target.value)}
-                    placeholder="es. Clienti VIP"
+                    placeholder="es. Clienti"
                     className="w-56 rounded border px-2 py-1.5 text-sm"
                   />
                 </label>
@@ -496,12 +525,22 @@ function FileImportSection({
                     <option key={c} value={c} />
                   ))}
                 </datalist>
+                <label className="text-sm">
+                  <span className="mb-1 block text-gray-600">Sottocategoria (opzionale)</span>
+                  <input
+                    value={bulkSubcategory}
+                    onChange={(e) => setBulkSubcategory(e.target.value)}
+                    placeholder="es. VIP"
+                    className="w-48 rounded border px-2 py-1.5 text-sm"
+                  />
+                </label>
 
                 <button
                   type="button"
                   onClick={() => {
-                    assignCategoryTo("all", bulkCategory);
+                    assignCategoryTo("all", bulkCategory, bulkSubcategory);
                     setBulkCategory("");
+                    setBulkSubcategory("");
                   }}
                   disabled={!bulkCategory.trim()}
                   className="rounded bg-brand-dark px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
@@ -511,8 +550,9 @@ function FileImportSection({
                 <button
                   type="button"
                   onClick={() => {
-                    assignCategoryTo(selected, bulkCategory);
+                    assignCategoryTo(selected, bulkCategory, bulkSubcategory);
                     setBulkCategory("");
+                    setBulkSubcategory("");
                   }}
                   disabled={!bulkCategory.trim() || selected.size === 0}
                   className="rounded border px-3 py-1.5 text-sm disabled:opacity-40"
@@ -657,33 +697,303 @@ function CategoriesOverview({
 }) {
   if (categories.length === 0) return null;
 
+  // Una categoria "Clienti > VIP" viene mostrata annidata sotto "Clienti",
+  // così una gerarchia costruita dal bulk-bar dei contatti si vede anche qui
+  // — restano comunque solo stringhe: nessun modello dati a parte.
+  const topLevel: CategoryFacet[] = [];
+  const childrenByParent = new Map<string, CategoryFacet[]>();
+  for (const c of categories) {
+    const [parent, ...rest] = c.name.split(" > ");
+    if (rest.length === 0) {
+      topLevel.push(c);
+    } else {
+      const list = childrenByParent.get(parent) ?? [];
+      list.push({ name: rest.join(" > "), contactCount: c.contactCount });
+      childrenByParent.set(parent, list);
+    }
+  }
+  // Un genitore può esistere solo come prefisso (mai assegnato da solo): va
+  // comunque mostrato come intestazione del gruppo, con contatore a 0.
+  for (const parent of childrenByParent.keys()) {
+    if (!topLevel.some((c) => c.name === parent)) {
+      topLevel.push({ name: parent, contactCount: 0 });
+    }
+  }
+  topLevel.sort((a, b) => a.name.localeCompare(b.name));
+
+  function pill(name: string, count: number, label: string) {
+    const active = activeCategory === name;
+    return (
+      <button
+        key={name}
+        onClick={() => onFilter(name)}
+        className={`rounded-full border px-3 py-1 text-sm ${
+          active ? "border-brand-dark bg-green-50 text-brand-dark" : "bg-white text-gray-600"
+        }`}
+      >
+        {label} <span className="text-gray-400">{count}</span>
+      </button>
+    );
+  }
+
   return (
     <section>
       <h2 className="mb-2 text-lg font-semibold">Categorie</h2>
-      <div className="flex flex-wrap gap-2">
-        <button
-          onClick={() => onFilter("")}
-          className={`rounded-full border px-3 py-1 text-sm ${
-            activeCategory === "" ? "border-brand-dark bg-green-50 text-brand-dark" : "bg-white text-gray-600"
-          }`}
-        >
-          Tutti
-        </button>
-        {categories.map((c) => (
+      <div className="space-y-2">
+        <div className="flex flex-wrap gap-2">
           <button
-            key={c.name}
-            onClick={() => onFilter(c.name)}
+            onClick={() => onFilter("")}
             className={`rounded-full border px-3 py-1 text-sm ${
-              activeCategory === c.name
-                ? "border-brand-dark bg-green-50 text-brand-dark"
-                : "bg-white text-gray-600"
+              activeCategory === "" ? "border-brand-dark bg-green-50 text-brand-dark" : "bg-white text-gray-600"
             }`}
           >
-            {c.name} <span className="text-gray-400">{c.contactCount}</span>
+            Tutti
           </button>
+          {topLevel.map((c) => pill(c.name, c.contactCount, c.name))}
+        </div>
+        {Array.from(childrenByParent.entries()).map(([parent, children]) => (
+          <div key={parent} className="flex flex-wrap items-center gap-2 pl-4 text-sm">
+            <span className="text-gray-400">↳ {parent}:</span>
+            {children.map((child) => pill(`${parent} > ${child.name}`, child.contactCount, child.name))}
+          </div>
         ))}
       </div>
     </section>
+  );
+}
+
+/* ---------------------------------------------------------- campi custom */
+
+// Le chiavi standard verso cui un campo personalizzato può essere diviso o
+// rinominato, oltre a un qualunque nuovo nome di campo personalizzato.
+const STANDARD_FIELD_KEYS = ["firstName", "lastName", "email"];
+
+function CustomFieldsSection({
+  teamId,
+  availableCustomFields,
+  onChanged,
+}: {
+  teamId: string | null;
+  availableCustomFields: string[];
+  onChanged: () => void;
+}) {
+  const [splitTarget, setSplitTarget] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const fieldSuggestions = Array.from(new Set([...STANDARD_FIELD_KEYS, ...availableCustomFields]));
+
+  if (availableCustomFields.length === 0) return null;
+
+  async function rename(oldKey: string) {
+    const newKey = renameValue.trim();
+    if (!newKey || newKey === oldKey) return;
+    setError(null);
+    try {
+      await callTool("/contacts/fields/rename", { teamId, oldKey, newKey });
+      setRenameTarget(null);
+      setRenameValue("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rinomina fallita");
+    }
+  }
+
+  async function remove(key: string) {
+    if (!confirm(`Eliminare il campo "${key}" da tutti i contatti? L'operazione non si può annullare.`)) return;
+    setError(null);
+    try {
+      const res = await callTool<{ updated: number }>("/contacts/fields/delete", { teamId, key });
+      setResult(`Campo "${key}" eliminato da ${res.updated} contatti.`);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione fallita");
+    }
+  }
+
+  return (
+    <section>
+      <h2 className="mb-1 text-lg font-semibold">Campi personalizzati</h2>
+      <p className="mb-3 text-xs text-gray-500">
+        Le colonne extra portate dai file importati, usabili come variabili nei template. Se un file aveva più
+        informazioni nella stessa colonna (es. nome e cognome insieme), puoi dividerle qui — si applica a tutti i
+        contatti che hanno quel campo, non serve reimportare.
+      </p>
+      <div className="space-y-2">
+        {availableCustomFields.map((key) => (
+          <div key={key} className="rounded border bg-white p-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {renameTarget === key ? (
+                <>
+                  <input
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    autoFocus
+                    className="rounded border px-2 py-1 text-sm"
+                  />
+                  <button onClick={() => rename(key)} className="rounded border px-2 py-1 text-xs">
+                    salva
+                  </button>
+                  <button
+                    onClick={() => {
+                      setRenameTarget(null);
+                      setRenameValue("");
+                    }}
+                    className="text-xs text-gray-500 underline"
+                  >
+                    annulla
+                  </button>
+                </>
+              ) : (
+                <>
+                  <code className="rounded bg-gray-100 px-2 py-1 text-sm">{key}</code>
+                  <button
+                    onClick={() => {
+                      setRenameTarget(key);
+                      setRenameValue(key);
+                    }}
+                    className="text-xs text-gray-500 underline"
+                  >
+                    rinomina
+                  </button>
+                  <button
+                    onClick={() => setSplitTarget(splitTarget === key ? null : key)}
+                    className="text-xs text-gray-500 underline"
+                  >
+                    {splitTarget === key ? "chiudi" : "dividi in due"}
+                  </button>
+                  <button onClick={() => remove(key)} className="text-xs text-red-600 underline">
+                    elimina
+                  </button>
+                </>
+              )}
+            </div>
+
+            {splitTarget === key && (
+              <SplitFieldForm
+                teamId={teamId}
+                sourceField={key}
+                fieldSuggestions={fieldSuggestions}
+                onDone={() => {
+                  setSplitTarget(null);
+                  onChanged();
+                }}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      {result && <p className="mt-2 text-sm text-green-700">{result}</p>}
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </section>
+  );
+}
+
+function SplitFieldForm({
+  teamId,
+  sourceField,
+  fieldSuggestions,
+  onDone,
+}: {
+  teamId: string | null;
+  sourceField: string;
+  fieldSuggestions: string[];
+  onDone: () => void;
+}) {
+  const [delimiter, setDelimiter] = useState(" ");
+  const [targetFirst, setTargetFirst] = useState("firstName");
+  const [targetSecond, setTargetSecond] = useState("lastName");
+  const [deleteSourceField, setDeleteSourceField] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  async function handleSplit() {
+    if (!targetFirst.trim() || !targetSecond.trim()) return;
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await callTool<{ updated: number; skipped: number }>("/contacts/fields/split", {
+        teamId,
+        sourceField,
+        delimiter: delimiter || " ",
+        targetFirst: targetFirst.trim(),
+        targetSecond: targetSecond.trim(),
+        deleteSourceField,
+      });
+      setResult(`Fatto: ${res.updated} contatti aggiornati, ${res.skipped} senza questo campo.`);
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Divisione fallita");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded bg-gray-50 p-3 text-sm">
+      <p className="text-xs text-gray-500">
+        Divide il valore di <code>{sourceField}</code> sulla prima occorrenza del delimitatore: la parte prima va
+        nel primo campo, il resto nel secondo.
+      </p>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-xs">
+          <span className="mb-1 block text-gray-600">Delimitatore</span>
+          <input
+            value={delimiter}
+            onChange={(e) => setDelimiter(e.target.value)}
+            className="w-20 rounded border px-2 py-1 text-sm"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="mb-1 block text-gray-600">Primo campo →</span>
+          <input
+            list="field-suggestions"
+            value={targetFirst}
+            onChange={(e) => setTargetFirst(e.target.value)}
+            className="w-40 rounded border px-2 py-1 text-sm"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="mb-1 block text-gray-600">Secondo campo →</span>
+          <input
+            list="field-suggestions"
+            value={targetSecond}
+            onChange={(e) => setTargetSecond(e.target.value)}
+            className="w-40 rounded border px-2 py-1 text-sm"
+          />
+        </label>
+        <datalist id="field-suggestions">
+          {fieldSuggestions.map((f) => (
+            <option key={f} value={f} />
+          ))}
+        </datalist>
+        <label className="flex items-center gap-1 text-xs text-gray-600">
+          <input
+            type="checkbox"
+            checked={deleteSourceField}
+            onChange={(e) => setDeleteSourceField(e.target.checked)}
+          />
+          elimina {sourceField} dopo la divisione
+        </label>
+        <button
+          onClick={handleSplit}
+          disabled={busy}
+          className="rounded bg-brand-dark px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+        >
+          {busy ? "Divido…" : "Dividi"}
+        </button>
+      </div>
+      <p className="text-xs text-gray-400">
+        Usa firstName, lastName o email per i campi standard (Nome, Cognome, Email), oppure il nome di un campo
+        personalizzato nuovo o esistente.
+      </p>
+      {result && <p className="text-green-700">{result}</p>}
+      {error && <p className="text-red-600">{error}</p>}
+    </div>
   );
 }
 
@@ -706,24 +1016,36 @@ function ContactsTable({
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const contacts = list?.contacts ?? [];
+  // Suggerisce solo le categorie "padre" già esistenti (senza ripetere le
+  // sottocategorie composte) quando l'utente digita nel campo Categoria.
+  const parentCategories = Array.from(new Set(knownCategories.map((c) => c.split(" > ")[0]))).sort();
 
   async function applyCategory(mode: "add" | "remove") {
     if (selected.size === 0 || !category.trim()) return;
     setBusy(true);
     setError(null);
     try {
+      const parent = category.trim();
+      const sub = subcategory.trim();
+      const compound = sub ? `${parent} > ${sub}` : null;
       await callTool("/contacts/categories/assign", {
         teamId,
         contactIds: Array.from(selected),
-        addCategories: mode === "add" ? [category.trim()] : [],
-        removeCategories: mode === "remove" ? [category.trim()] : [],
+        // Assegnare una sottocategoria include sempre anche la categoria
+        // padre, così un segmento/campagna sulla categoria padre continua a
+        // includere chi ha solo la sottocategoria. Rimuovere una
+        // sottocategoria, invece, non tocca la categoria padre.
+        addCategories: mode === "add" ? (compound ? [parent, compound] : [parent]) : [],
+        removeCategories: mode === "remove" ? [compound ?? parent] : [],
       });
       setSelected(new Set());
       setCategory("");
+      setSubcategory("");
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Aggiornamento categorie fallito");
@@ -771,16 +1093,23 @@ function ContactsTable({
             className="rounded border px-2 py-1 text-sm"
           />
           <datalist id="known-categories-list">
-            {knownCategories.map((c) => (
+            {parentCategories.map((c) => (
               <option key={c} value={c} />
             ))}
           </datalist>
+          <span className="text-gray-400">›</span>
+          <input
+            value={subcategory}
+            onChange={(e) => setSubcategory(e.target.value)}
+            placeholder="sottocategoria (opzionale)"
+            className="rounded border px-2 py-1 text-sm"
+          />
           <button
             onClick={() => applyCategory("add")}
             disabled={busy || !category.trim()}
             className="rounded bg-brand-dark px-3 py-1 text-sm font-medium text-white disabled:opacity-40"
           >
-            Aggiungi categoria
+            Aggiungi
           </button>
           <button
             onClick={() => applyCategory("remove")}

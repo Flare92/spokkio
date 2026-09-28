@@ -221,6 +221,44 @@ export const FetchGoogleSheetOutput = z.object({
 });
 export type FetchGoogleSheetOutput = z.infer<typeof FetchGoogleSheetOutput>;
 
+// Divide un campo (standard o custom) già popolato in due, sull'occorrenza
+// del delimitatore: serve a correggere un CSV già importato che ha, ad
+// esempio, nome e cognome nella stessa colonna. Si applica a tutti i
+// contatti del team che hanno il campo di origine valorizzato.
+export const SplitContactFieldInput = z.object({
+  teamId: z.string().uuid(),
+  sourceField: z.string().min(1),
+  delimiter: z.string().min(1).default(" "),
+  // Se il delimitatore non è presente in un valore, tutto finisce nel primo
+  // campo e il secondo resta vuoto per quel contatto.
+  targetFirst: z.string().min(1),
+  targetSecond: z.string().min(1),
+  // Rimuove il campo di origine dopo la divisione, se è un campo
+  // personalizzato distinto dai due di destinazione (mai per i campi
+  // standard, che restano sempre presenti sul contatto).
+  deleteSourceField: z.boolean().default(true),
+});
+export type SplitContactFieldInput = z.infer<typeof SplitContactFieldInput>;
+
+export const SplitContactFieldOutput = z.object({
+  updated: z.number().int(),
+  skipped: z.number().int(),
+});
+export type SplitContactFieldOutput = z.infer<typeof SplitContactFieldOutput>;
+
+export const RenameCustomFieldInput = z.object({
+  teamId: z.string().uuid(),
+  oldKey: z.string().min(1),
+  newKey: z.string().min(1),
+});
+export type RenameCustomFieldInput = z.infer<typeof RenameCustomFieldInput>;
+
+export const DeleteCustomFieldInput = z.object({
+  teamId: z.string().uuid(),
+  key: z.string().min(1),
+});
+export type DeleteCustomFieldInput = z.infer<typeof DeleteCustomFieldInput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
@@ -238,4 +276,7 @@ export const CONTACTS_TOOLS = {
   "contacts.merge": { input: MergeContactsInput, output: ContactOutput },
   "contacts.export": { input: ExportContactsInput, output: ExportContactsOutput },
   "contacts.fetchGoogleSheet": { input: FetchGoogleSheetInput, output: FetchGoogleSheetOutput },
+  "contacts.splitField": { input: SplitContactFieldInput, output: SplitContactFieldOutput },
+  "contacts.renameCustomField": { input: RenameCustomFieldInput, output: z.object({ updated: z.number().int() }) },
+  "contacts.deleteCustomField": { input: DeleteCustomFieldInput, output: z.object({ updated: z.number().int() }) },
 } as const;

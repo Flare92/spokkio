@@ -13,6 +13,9 @@ import {
   MergeContactsInput,
   ExportContactsInput,
   FetchGoogleSheetInput,
+  SplitContactFieldInput,
+  RenameCustomFieldInput,
+  DeleteCustomFieldInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { GoogleSheetService } from "./google-sheet.service";
@@ -108,5 +111,23 @@ export class ContactsController {
   @Post("google-sheet")
   fetchGoogleSheet(@Body(new ZodValidationPipe(FetchGoogleSheetInput)) body: FetchGoogleSheetInput) {
     return this.googleSheet.fetch(body);
+  }
+
+  // tool: contacts.splitField
+  @Post("fields/split")
+  splitField(@Body(new ZodValidationPipe(SplitContactFieldInput)) body: SplitContactFieldInput) {
+    return this.contacts.splitField(body);
+  }
+
+  // tool: contacts.renameCustomField
+  @Post("fields/rename")
+  renameCustomField(@Body(new ZodValidationPipe(RenameCustomFieldInput)) body: RenameCustomFieldInput) {
+    return this.contacts.renameCustomField(body);
+  }
+
+  // tool: contacts.deleteCustomField
+  @Post("fields/delete")
+  deleteCustomField(@Body(new ZodValidationPipe(DeleteCustomFieldInput)) body: DeleteCustomFieldInput) {
+    return this.contacts.deleteCustomField(body);
   }
 }

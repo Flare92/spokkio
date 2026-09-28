@@ -110,7 +110,7 @@ export interface NormalizationSummary {
 export function normalizeRows(
   rows: Record<string, string>[],
   mapping: ColumnMapping,
-  options: { defaultCountryCode: string; extraTags: string[] },
+  options: { defaultCountryCode: string; extraTags: string[]; splitFullName?: boolean },
 ): NormalizationSummary {
   const valid: NormalizedRow[] = [];
   const invalid: { row: number; reason: string }[] = [];
@@ -147,10 +147,29 @@ export function normalizeRows(
 
     const email = mapping.fields.email ? (row[mapping.fields.email] ?? "").trim() : "";
 
+    let firstName = mapping.fields.firstName ? row[mapping.fields.firstName] || undefined : undefined;
+    let lastName = mapping.fields.lastName ? row[mapping.fields.lastName] || undefined : undefined;
+
+    // Alcuni file hanno nome e cognome nella stessa colonna: se l'utente lo
+    // segnala, dividiamo sulla prima parola invece di duplicare l'intero
+    // valore su entrambi i campi.
+    if (
+      options.splitFullName &&
+      mapping.fields.firstName &&
+      mapping.fields.firstName === mapping.fields.lastName &&
+      firstName
+    ) {
+      const spaceIndex = firstName.indexOf(" ");
+      if (spaceIndex !== -1) {
+        lastName = firstName.slice(spaceIndex + 1).trim();
+        firstName = firstName.slice(0, spaceIndex).trim();
+      }
+    }
+
     valid.push({
       phoneE164: phone.phoneE164!,
-      firstName: mapping.fields.firstName ? row[mapping.fields.firstName] || undefined : undefined,
-      lastName: mapping.fields.lastName ? row[mapping.fields.lastName] || undefined : undefined,
+      firstName,
+      lastName,
       // Un'email malformata non deve far scartare l'intero contatto: la
       // scartiamo e teniamo il resto (il canale principale è WhatsApp).
       email: email && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? email : undefined,
