@@ -259,6 +259,17 @@ export const DeleteCustomFieldInput = z.object({
 });
 export type DeleteCustomFieldInput = z.infer<typeof DeleteCustomFieldInput>;
 
+// Cancella TUTTI i contatti del team e tutto ciò che esiste solo in funzione
+// di loro (conversazioni, messaggi, eventi di attribuzione, link tracciati,
+// appuntamenti). Segmenti/template/campagne/automazioni restano, ma senza
+// destinatari finché non si reimporta — operazione irreversibile, pensata
+// per ripartire da zero (es. dopo un test con dati finti).
+export const DeleteAllContactsInput = z.object({ teamId: z.string().uuid() });
+export type DeleteAllContactsInput = z.infer<typeof DeleteAllContactsInput>;
+
+export const DeleteAllContactsOutput = z.object({ deleted: z.number().int() });
+export type DeleteAllContactsOutput = z.infer<typeof DeleteAllContactsOutput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
@@ -279,4 +290,5 @@ export const CONTACTS_TOOLS = {
   "contacts.splitField": { input: SplitContactFieldInput, output: SplitContactFieldOutput },
   "contacts.renameCustomField": { input: RenameCustomFieldInput, output: z.object({ updated: z.number().int() }) },
   "contacts.deleteCustomField": { input: DeleteCustomFieldInput, output: z.object({ updated: z.number().int() }) },
+  "contacts.deleteAll": { input: DeleteAllContactsInput, output: DeleteAllContactsOutput },
 } as const;

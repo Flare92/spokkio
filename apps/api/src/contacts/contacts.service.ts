@@ -22,6 +22,8 @@ import type {
   SplitContactFieldOutput,
   RenameCustomFieldInput,
   DeleteCustomFieldInput,
+  DeleteAllContactsInput,
+  DeleteAllContactsOutput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -576,6 +578,35 @@ export class ContactsService {
       updated++;
     }
     return { updated };
+  }
+
+  // Tool: contacts.deleteAll — cancellazione totale e irreversibile: anche
+  // tutto ciò che esiste solo in funzione dei contatti (conversazioni,
+  // messaggi, eventi di attribuzione, link tracciati, appuntamenti) viene
+  // rimosso con loro. Segmenti/template/campagne/automazioni restano, ma
+  // senza destinatari finché non si reimporta. L'ordine rispetta i vincoli
+  // di chiave esterna: prima ciò che dipende dai messaggi/conversazioni,
+  // poi le conversazioni, infine i contatti stessi.
+  async deleteAllContacts(input: DeleteAllContactsInput): Promise<DeleteAllContactsOutput> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { teamId: input.teamId },
+      select: { id: true },
+    });
+    const contactIds = contacts.map((c) => c.id);
+    if (contactIds.length === 0) return { deleted: 0 };
+
+    await this.prisma.$transaction([
+      this.prisma.attributionEvent.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.trackedLink.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.message.deleteMany({ where: { conversation: { contactId: { in: contactIds } } } }),
+      this.prisma.segmentContact.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.appointment.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.automationRun.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.conversation.deleteMany({ where: { contactId: { in: contactIds } } }),
+      this.prisma.contact.deleteMany({ where: { id: { in: contactIds } } }),
+    ]);
+
+    return { deleted: contactIds.length };
   }
 
   private async findDuplicatesFor(

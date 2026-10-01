@@ -153,6 +153,8 @@ export default function ContactsPage() {
           onCreated={loadSegments}
         />
 
+        <DangerZoneSection teamId={teamId} totalContacts={list?.total ?? 0} onChanged={refreshAll} />
+
         {error && <p className="text-sm text-red-600">{error}</p>}
       </main>
     </div>
@@ -1488,6 +1490,72 @@ function downloadCsv(csv: string, filename: string) {
   link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+/* ---------------------------------------------------------- zona pericolosa */
+
+const DELETE_ALL_CONFIRM_PHRASE = "ELIMINA TUTTI I CONTATTI";
+
+function DangerZoneSection({
+  teamId,
+  totalContacts,
+  onChanged,
+}: {
+  teamId: string | null;
+  totalContacts: number;
+  onChanged: () => void;
+}) {
+  const [confirmText, setConfirmText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  if (totalContacts === 0) return null;
+
+  async function handleDeleteAll() {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await callTool<{ deleted: number }>("/contacts/delete-all", { teamId });
+      setResult(`Eliminati ${res.deleted} contatti, con tutta la loro cronologia.`);
+      setConfirmText("");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione fallita");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="rounded border border-red-200 bg-red-50 p-4">
+      <h2 className="mb-1 text-lg font-semibold text-red-700">Zona pericolosa</h2>
+      <p className="mb-3 text-sm text-red-700">
+        Elimina tutti i {totalContacts} contatti del team, insieme a conversazioni, messaggi, appuntamenti e
+        link tracciati collegati a loro — anche le statistiche delle campagne già inviate a questi contatti
+        risulteranno azzerate. Segmenti, template, campagne e automazioni restano, ma senza destinatari finché
+        non importi di nuovo i contatti. <strong>Non si può annullare.</strong>
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder={`Scrivi "${DELETE_ALL_CONFIRM_PHRASE}" per confermare`}
+          className="w-80 rounded border border-red-300 px-2 py-1.5 text-sm"
+        />
+        <button
+          onClick={handleDeleteAll}
+          disabled={busy || confirmText !== DELETE_ALL_CONFIRM_PHRASE}
+          className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {busy ? "Elimino…" : "Elimina tutti i contatti"}
+        </button>
+      </div>
+      {result && <p className="mt-2 text-sm text-green-700">{result}</p>}
+      {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+    </section>
+  );
 }
 
 // Prova a indovinare la mappatura dalle intestazioni più comuni, così nel caso

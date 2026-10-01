@@ -16,6 +16,7 @@ import {
   SplitContactFieldInput,
   RenameCustomFieldInput,
   DeleteCustomFieldInput,
+  DeleteAllContactsInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { GoogleSheetService } from "./google-sheet.service";
@@ -129,5 +130,11 @@ export class ContactsController {
   @Post("fields/delete")
   deleteCustomField(@Body(new ZodValidationPipe(DeleteCustomFieldInput)) body: DeleteCustomFieldInput) {
     return this.contacts.deleteCustomField(body);
+  }
+
+  // tool: contacts.deleteAll
+  @Post("delete-all")
+  deleteAll(@Body(new ZodValidationPipe(DeleteAllContactsInput)) body: DeleteAllContactsInput) {
+    return this.contacts.deleteAllContacts(body);
   }
 }
