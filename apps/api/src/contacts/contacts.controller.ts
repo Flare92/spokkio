@@ -16,6 +16,7 @@ import {
   SplitContactFieldInput,
   RenameCustomFieldInput,
   DeleteCustomFieldInput,
+  DeleteContactsInput,
   DeleteAllContactsInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
@@ -130,6 +131,12 @@ export class ContactsController {
   @Post("fields/delete")
   deleteCustomField(@Body(new ZodValidationPipe(DeleteCustomFieldInput)) body: DeleteCustomFieldInput) {
     return this.contacts.deleteCustomField(body);
+  }
+
+  // tool: contacts.delete
+  @Post("delete")
+  delete(@Body(new ZodValidationPipe(DeleteContactsInput)) body: DeleteContactsInput) {
+    return this.contacts.deleteContacts(body);
   }
 
   // tool: contacts.deleteAll

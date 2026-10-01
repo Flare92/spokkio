@@ -122,6 +122,21 @@ export default function ContactDetailPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!confirm("Eliminare questo contatto? Conversazioni e messaggi collegati verranno persi. Non si può annullare.")) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await callTool("/contacts/delete", { teamId, contactIds: [params.id] });
+      router.push("/contacts");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione fallita");
+      setBusy(false);
+    }
+  }
+
   if (!detail) {
     return (
       <div>
@@ -148,9 +163,14 @@ export default function ContactDetailPage() {
             <h1 className="text-lg font-semibold">
               {[contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.phoneE164}
             </h1>
-            <button onClick={() => setEditing((v) => !v)} className="text-sm text-brand-dark underline">
-              {editing ? "annulla" : "modifica"}
-            </button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setEditing((v) => !v)} className="text-sm text-brand-dark underline">
+                {editing ? "annulla" : "modifica"}
+              </button>
+              <button onClick={handleDelete} disabled={busy} className="text-sm text-red-600 underline disabled:opacity-40">
+                elimina
+              </button>
+            </div>
           </div>
 
           {editing ? (

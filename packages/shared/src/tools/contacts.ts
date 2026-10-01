@@ -259,6 +259,19 @@ export const DeleteCustomFieldInput = z.object({
 });
 export type DeleteCustomFieldInput = z.infer<typeof DeleteCustomFieldInput>;
 
+// Cancella uno o più contatti specifici (un solo id per l'eliminazione
+// singola, più id per quella da selezione multipla) insieme a tutto ciò che
+// esiste solo in funzione di loro — stessa logica di contacts.deleteAll, ma
+// su un sottoinsieme invece che sull'intero team.
+export const DeleteContactsInput = z.object({
+  teamId: z.string().uuid(),
+  contactIds: z.array(z.string().uuid()).min(1),
+});
+export type DeleteContactsInput = z.infer<typeof DeleteContactsInput>;
+
+export const DeleteContactsOutput = z.object({ deleted: z.number().int() });
+export type DeleteContactsOutput = z.infer<typeof DeleteContactsOutput>;
+
 // Cancella TUTTI i contatti del team e tutto ciò che esiste solo in funzione
 // di loro (conversazioni, messaggi, eventi di attribuzione, link tracciati,
 // appuntamenti). Segmenti/template/campagne/automazioni restano, ma senza
@@ -290,5 +303,6 @@ export const CONTACTS_TOOLS = {
   "contacts.splitField": { input: SplitContactFieldInput, output: SplitContactFieldOutput },
   "contacts.renameCustomField": { input: RenameCustomFieldInput, output: z.object({ updated: z.number().int() }) },
   "contacts.deleteCustomField": { input: DeleteCustomFieldInput, output: z.object({ updated: z.number().int() }) },
+  "contacts.delete": { input: DeleteContactsInput, output: DeleteContactsOutput },
   "contacts.deleteAll": { input: DeleteAllContactsInput, output: DeleteAllContactsOutput },
 } as const;

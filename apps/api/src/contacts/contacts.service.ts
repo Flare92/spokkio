@@ -22,6 +22,8 @@ import type {
   SplitContactFieldOutput,
   RenameCustomFieldInput,
   DeleteCustomFieldInput,
+  DeleteContactsInput,
+  DeleteContactsOutput,
   DeleteAllContactsInput,
   DeleteAllContactsOutput,
 } from "@spokkio/shared";
@@ -580,20 +582,40 @@ export class ContactsService {
     return { updated };
   }
 
+  // Tool: contacts.delete — elimina uno o più contatti specifici (un id solo
+  // per l'eliminazione singola, più id per quella da selezione multipla),
+  // con la stessa cascata di contacts.deleteAll ma limitata al sottoinsieme
+  // scelto. Il filtro per teamId evita di poter cancellare un contatto di
+  // un altro team passando un id indovinato.
+  async deleteContacts(input: DeleteContactsInput): Promise<DeleteContactsOutput> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { teamId: input.teamId, id: { in: input.contactIds } },
+      select: { id: true },
+    });
+    const deleted = await this.deleteContactsCascade(contacts.map((c) => c.id));
+    return { deleted };
+  }
+
   // Tool: contacts.deleteAll — cancellazione totale e irreversibile: anche
   // tutto ciò che esiste solo in funzione dei contatti (conversazioni,
   // messaggi, eventi di attribuzione, link tracciati, appuntamenti) viene
   // rimosso con loro. Segmenti/template/campagne/automazioni restano, ma
-  // senza destinatari finché non si reimporta. L'ordine rispetta i vincoli
-  // di chiave esterna: prima ciò che dipende dai messaggi/conversazioni,
-  // poi le conversazioni, infine i contatti stessi.
+  // senza destinatari finché non si reimporta.
   async deleteAllContacts(input: DeleteAllContactsInput): Promise<DeleteAllContactsOutput> {
     const contacts = await this.prisma.contact.findMany({
       where: { teamId: input.teamId },
       select: { id: true },
     });
-    const contactIds = contacts.map((c) => c.id);
-    if (contactIds.length === 0) return { deleted: 0 };
+    const deleted = await this.deleteContactsCascade(contacts.map((c) => c.id));
+    return { deleted };
+  }
+
+  // Cancella i contatti indicati e tutto ciò che esiste solo in funzione di
+  // loro, in un'unica transazione che rispetta i vincoli di chiave esterna:
+  // prima ciò che dipende dai messaggi/conversazioni, poi le conversazioni,
+  // infine i contatti stessi.
+  private async deleteContactsCascade(contactIds: string[]): Promise<number> {
+    if (contactIds.length === 0) return 0;
 
     await this.prisma.$transaction([
       this.prisma.attributionEvent.deleteMany({ where: { contactId: { in: contactIds } } }),
@@ -606,7 +628,7 @@ export class ContactsService {
       this.prisma.contact.deleteMany({ where: { id: { in: contactIds } } }),
     ]);
 
-    return { deleted: contactIds.length };
+    return contactIds.length;
   }
 
   private async findDuplicatesFor(

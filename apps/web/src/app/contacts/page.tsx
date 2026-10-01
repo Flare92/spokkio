@@ -1065,6 +1065,46 @@ function ContactsTable({
     }
   }
 
+  async function deleteSelected() {
+    if (selected.size === 0) return;
+    if (
+      !confirm(
+        `Eliminare ${selected.size} contatti selezionati? Conversazioni e messaggi collegati verranno persi. Non si può annullare.`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await callTool("/contacts/delete", { teamId, contactIds: Array.from(selected) });
+      setSelected(new Set());
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione fallita");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteOne(contactId: string) {
+    if (!confirm("Eliminare questo contatto? Conversazioni e messaggi collegati verranno persi. Non si può annullare.")) {
+      return;
+    }
+    setError(null);
+    try {
+      await callTool("/contacts/delete", { teamId, contactIds: [contactId] });
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(contactId);
+        return next;
+      });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione fallita");
+    }
+  }
+
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -1120,8 +1160,15 @@ function ContactsTable({
           >
             Rimuovi
           </button>
-          <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-gray-500 underline">
+          <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 underline">
             deseleziona
+          </button>
+          <button
+            onClick={deleteSelected}
+            disabled={busy}
+            className="ml-auto rounded border border-red-300 px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            Elimina selezionati
           </button>
         </div>
       )}
@@ -1154,6 +1201,7 @@ function ContactsTable({
               <th className="px-3 py-2">Nome</th>
               <th className="px-3 py-2">Categorie</th>
               <th className="px-3 py-2">Tag</th>
+              <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
@@ -1204,11 +1252,16 @@ function ContactsTable({
                     </span>
                   ))}
                 </td>
+                <td className="px-3 py-2 text-right">
+                  <button onClick={() => deleteOne(c.id)} className="text-xs text-red-600 underline">
+                    elimina
+                  </button>
+                </td>
               </tr>
             ))}
             {contacts.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-400">
+                <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-400">
                   Nessun contatto. Importa un file per iniziare.
                 </td>
               </tr>
