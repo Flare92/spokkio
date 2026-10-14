@@ -12,6 +12,7 @@ import { BillingModule } from "./billing/billing.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { TrackingModule } from "./tracking/tracking.module";
 import { MediaModule } from "./media/media.module";
+import { SystemModule } from "./system/system.module";
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { MediaModule } from "./media/media.module";
     BillingModule,
     TrackingModule,
     MediaModule,
+    SystemModule,
   ],
 })
 export class AppModule {}

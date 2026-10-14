@@ -125,8 +125,9 @@ Come si usa:
   • Apri il Finder -> Applicazioni (o cerca "Spokkio" con Spotlight, Cmd+Spazio)
   • Doppio click su Spokkio: parte tutto e il browser si apre da solo su
     http://localhost:3000
-  • Per chiuderlo: Cmd+Q, oppure tasto destro sull'icona nel Dock -> Esci.
-    API e interfaccia si fermano davvero, e alla prossima apertura Spokkio
+  • Per chiuderlo: pulsante "Chiudi Spokkio" in alto a destra nell'interfaccia,
+    oppure tasto destro sull'icona di Spokkio nel Dock -> Esci. (Cmd+Q chiude
+    il browser, che è l'app in primo piano.) Alla prossima apertura Spokkio
     controlla gli aggiornamenti e si ricompila da solo se serve.
 
 I log stanno in ~/Library/Logs/Spokkio/spokkio.log

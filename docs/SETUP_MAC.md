@@ -132,7 +132,9 @@ In alternativa, se hai già installato l'app con `scripts/build-mac-app.sh` (ved
 
 ## Chiudere Spokkio
 
-Chiudi Spokkio come qualunque app: **Cmd+Q**, oppure tasto destro sull'icona nel Dock → **Esci**. API e interfaccia si fermano davvero, così al prossimo doppio click l'app riparte da capo (e si aggiorna). Se Spokkio è già aperto, un doppio click sull'icona riapre solo il browser.
+Usa il pulsante **Chiudi Spokkio** in alto a destra nell'interfaccia, oppure tasto destro sull'icona di Spokkio nel Dock → **Esci**. API e interfaccia si fermano davvero, così al prossimo doppio click l'app riparte da capo (e si aggiorna). Se Spokkio è già aperto, un doppio click sull'icona riapre solo il browser.
+
+Attenzione: **Cmd+Q** chiude l'app in primo piano. Mentre usi Spokkio in primo piano c'è il browser, quindi Cmd+Q chiude il browser e non Spokkio (funziona solo se prima selezioni Spokkio con Cmd+Tab).
 
 Se l'app si fosse bloccata comunque, dal Terminale nella cartella del progetto:
 
