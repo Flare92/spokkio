@@ -26,6 +26,9 @@ import type {
   DeleteContactsOutput,
   DeleteAllContactsInput,
   DeleteAllContactsOutput,
+  RemoveCategoryInput,
+  RemoveCategoryOutput,
+  DeleteSegmentInput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -608,6 +611,69 @@ export class ContactsService {
     });
     const deleted = await this.deleteContactsCascade(contacts.map((c) => c.id));
     return { deleted };
+  }
+
+  // Tool: contacts.removeCategory
+  async removeCategory(input: RemoveCategoryInput): Promise<RemoveCategoryOutput> {
+    const inCategory = (c: string) => c === input.category || c.startsWith(`${input.category} > `);
+    const contacts = await this.prisma.contact.findMany({
+      where: { teamId: input.teamId },
+      select: { id: true, categories: true },
+    });
+    const matching = contacts.filter((c) => c.categories.some(inCategory));
+
+    let contactsUpdated = 0;
+    let contactsDeleted = 0;
+    if (input.deleteContacts) {
+      contactsDeleted = await this.deleteContactsCascade(matching.map((c) => c.id));
+    } else {
+      for (const contact of matching) {
+        await this.prisma.contact.update({
+          where: { id: contact.id },
+          data: { categories: contact.categories.filter((c) => !inCategory(c)) },
+        });
+        contactsUpdated++;
+      }
+    }
+
+    // Il segmento creato in automatico per questa categoria sparisce con lei,
+    // se nessuna campagna lo usa (altrimenti resta come storico, vuoto).
+    const categorySegments = await this.prisma.segment.findMany({
+      where: { teamId: input.teamId, matchTags: { isEmpty: true } },
+      include: { _count: { select: { campaigns: true } } },
+    });
+    for (const segment of categorySegments) {
+      // Solo i segmenti generati da Spokkio ("Categoria: ..."), mai quelli
+      // creati a mano dall'utente.
+      const onlyThisCategory =
+        segment.name.startsWith("Categoria: ") &&
+        segment.matchCategories.length > 0 &&
+        segment.matchCategories.every(inCategory);
+      if (onlyThisCategory && segment._count.campaigns === 0) {
+        await this.prisma.segmentContact.deleteMany({ where: { segmentId: segment.id } });
+        await this.prisma.segment.delete({ where: { id: segment.id } });
+      }
+    }
+
+    await this.refreshCategorySegments(input.teamId);
+    return { contactsUpdated, contactsDeleted };
+  }
+
+  // Tool: contacts.deleteSegment
+  async deleteSegment(input: DeleteSegmentInput): Promise<{ deleted: true }> {
+    const segment = await this.prisma.segment.findFirst({
+      where: { id: input.segmentId, teamId: input.teamId },
+      include: { _count: { select: { campaigns: true } } },
+    });
+    if (!segment) throw new NotFoundException("Segmento non trovato");
+    if (segment._count.campaigns > 0) {
+      throw new BadRequestException(
+        `Il segmento è usato da ${segment._count.campaigns} campagne e ne conserva lo storico dei destinatari: non si può eliminare.`,
+      );
+    }
+    await this.prisma.segmentContact.deleteMany({ where: { segmentId: segment.id } });
+    await this.prisma.segment.delete({ where: { id: segment.id } });
+    return { deleted: true };
   }
 
   // Cancella i contatti indicati e tutto ciò che esiste solo in funzione di

@@ -123,9 +123,11 @@ export default function ContactsPage() {
         <FileImportSection teamId={teamId} knownCategories={knownCategories} onImported={refreshAll} />
 
         <CategoriesOverview
+          teamId={teamId}
           categories={list?.availableCategories ?? []}
           activeCategory={categoryFilter}
           onFilter={setCategoryFilter}
+          onChanged={refreshAll}
         />
 
         <CustomFieldsSection
@@ -689,15 +691,51 @@ function FileImportSection({
 /* ------------------------------------------------------------ categorie */
 
 function CategoriesOverview({
+  teamId,
   categories,
   activeCategory,
   onFilter,
+  onChanged,
 }: {
+  teamId: string | null;
   categories: CategoryFacet[];
   activeCategory: string;
   onFilter: (category: string) => void;
+  onChanged: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
   if (categories.length === 0) return null;
+
+  const activeCount = categories.find((c) => c.name === activeCategory)?.contactCount ?? 0;
+
+  async function removeActiveCategory(deleteContacts: boolean) {
+    const question = deleteContacts
+      ? `Eliminare definitivamente i ${activeCount} contatti della categoria "${activeCategory}" (comprese le sue sottocategorie), con conversazioni e messaggi? Non si può annullare.`
+      : `Togliere la categoria "${activeCategory}" (e le sue sottocategorie) da tutti i contatti? I contatti restano.`;
+    if (!confirm(question)) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await callTool<{ contactsUpdated: number; contactsDeleted: number }>("/contacts/categories/remove", {
+        teamId,
+        category: activeCategory,
+        deleteContacts,
+      });
+      setMessage(
+        deleteContacts
+          ? `Eliminati ${res.contactsDeleted} contatti della categoria "${activeCategory}".`
+          : `Categoria "${activeCategory}" tolta da ${res.contactsUpdated} contatti.`,
+      );
+      onFilter("");
+      onChanged();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Operazione non riuscita");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Una categoria "Clienti > VIP" viene mostrata annidata sotto "Clienti",
   // così una gerarchia costruita dal bulk-bar dei contatti si vede anche qui
@@ -760,6 +798,30 @@ function CategoriesOverview({
           </div>
         ))}
       </div>
+      {activeCategory ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded border bg-gray-50 p-2 text-sm">
+          <span className="text-gray-600">
+            Categoria <strong>{activeCategory}</strong>:
+          </span>
+          <button
+            onClick={() => removeActiveCategory(false)}
+            disabled={busy}
+            className="rounded border px-3 py-1 text-sm disabled:opacity-40"
+          >
+            Togli la categoria dai contatti
+          </button>
+          <button
+            onClick={() => removeActiveCategory(true)}
+            disabled={busy}
+            className="rounded border border-red-300 px-3 py-1 text-sm text-red-600 hover:bg-red-50 disabled:opacity-40"
+          >
+            Elimina i contatti di questa categoria
+          </button>
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-gray-500">Clicca una categoria per filtrare i contatti o per eliminarla.</p>
+      )}
+      {message && <p className="mt-2 text-sm text-gray-700">{message}</p>}
     </section>
   );
 }
@@ -1173,6 +1235,11 @@ function ContactsTable({
         </div>
       )}
 
+      <p className="mb-2 text-xs text-gray-500">
+        Per eliminare: &quot;elimina&quot; in fondo alla riga di un contatto, oppure seleziona più contatti con le caselle
+        e usa &quot;Elimina selezionati&quot;. Per svuotare tutto c&apos;è la Zona pericolosa in fondo alla pagina.
+      </p>
+
       {list && list.availableCustomFields.length > 0 && (
         <p className="mb-2 text-xs text-gray-500">
           Variabili disponibili per le campagne:{" "}
@@ -1423,18 +1490,35 @@ function SegmentsSection({
                   )
                 </span>
               </span>
-              <button
-                onClick={async () => {
-                  const result = await callTool<{ csv: string; filename: string }>("/contacts/export", {
-                    teamId,
-                    segmentId: s.id,
-                  });
-                  downloadCsv(result.csv, result.filename);
-                }}
-                className="text-xs text-gray-500 underline"
-              >
-                esporta
-              </button>
+              <span className="flex shrink-0 gap-3">
+                <button
+                  onClick={async () => {
+                    const result = await callTool<{ csv: string; filename: string }>("/contacts/export", {
+                      teamId,
+                      segmentId: s.id,
+                    });
+                    downloadCsv(result.csv, result.filename);
+                  }}
+                  className="text-xs text-gray-500 underline"
+                >
+                  esporta
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!confirm(`Eliminare il segmento "${s.name}"? I contatti non vengono toccati.`)) return;
+                    setError(null);
+                    try {
+                      await callTool("/contacts/segments/delete", { teamId, segmentId: s.id });
+                      onCreated();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Eliminazione segmento fallita");
+                    }
+                  }}
+                  className="text-xs text-red-600 underline"
+                >
+                  elimina
+                </button>
+              </span>
             </li>
           ))}
         </ul>

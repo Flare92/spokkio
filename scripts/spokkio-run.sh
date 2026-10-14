@@ -1,206 +1,206 @@
 #!/usr/bin/env bash
 # Avvia Spokkio in locale (Postgres + API + Web) e apre il browser.
-# Viene richiamato da Spokkio.app: non serve lanciarlo a mano.
+# Lo lancia Spokkio.app: non serve usarlo a mano. Per fermarlo c'è
+# scripts/spokkio-stop.sh, che l'app richiama quando la chiudi.
 #
-# Restano in esecuzione due processi (API e Web); quando questo script viene
-# terminato, entrambi vengono chiusi.
+# Tutto il corpo è dentro main(): bash legge un file un pezzo alla volta
+# mentre lo esegue, e l'aggiornamento automatico sovrascrive proprio questo
+# file. Con una funzione bash ha già letto tutto prima di partire.
 
 set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="$HOME/Library/Logs/Spokkio"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/spokkio.log"
+# shellcheck source=scripts/spokkio-common.sh
+source "$ROOT_DIR/scripts/spokkio-common.sh"
 
-log() { printf "[%s] %s\n" "$(date '+%H:%M:%S')" "$1" | tee -a "$LOG_FILE"; }
-
-# I binari di Homebrew e di postgresql@16 (keg-only) non sono nel PATH di
-# un'app avviata dal Finder, che non carica il profilo della shell.
-export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
-
-# "pnpm exec next start" avvia a sua volta un processo figlio: fermare solo il
-# processo che abbiamo lanciato lascerebbe in vita il vero server, che
-# continuerebbe a occupare la porta al prossimo avvio.
-kill_tree() {
-  local pid="$1"
-  [[ -z "$pid" ]] && return 0
-  for child in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$child"
-  done
-  kill "$pid" 2>/dev/null
-}
+API_PID=""
+WEB_PID=""
+CLEANED_UP=0
 
 cleanup() {
+  [[ "$CLEANED_UP" == 1 ]] && return
+  CLEANED_UP=1
   log "Arresto Spokkio..."
-  kill_tree "${API_PID:-}"
-  kill_tree "${WEB_PID:-}"
-  wait 2>/dev/null
+  kill_tree "$API_PID" TERM
+  kill_tree "$WEB_PID" TERM
+  sleep 1
+  kill_tree "$API_PID" KILL
+  kill_tree "$WEB_PID" KILL
+  # Il PID file appartiene a questo processo solo se contiene ancora il suo PID.
+  [[ "$(cat "$PID_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$PID_FILE"
   log "Spokkio arrestato."
 }
-trap cleanup EXIT INT TERM
 
-log "Avvio Spokkio da $ROOT_DIR"
-
-# --- Aggiornamento automatico -------------------------------------------------
-# Non essendo distribuita da uno store, Spokkio si allinea da sola al branch
-# remoto ad ogni avvio: solo se l'albero di lavoro è pulito e l'avanzamento è
-# un fast-forward pulito. In ogni altro caso (modifiche locali, storia
-# divergente, nessuna rete) non tocchiamo nulla — meglio un aggiornamento
-# saltato che un repository rotto sul computer dell'utente.
-if git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  BRANCH="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-  if [[ -n "$BRANCH" && "$BRANCH" != "HEAD" ]] && git -C "$ROOT_DIR" fetch origin "$BRANCH" --quiet 2>>"$LOG_FILE"; then
-    LOCAL_REV="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)"
-    REMOTE_REV="$(git -C "$ROOT_DIR" rev-parse "origin/$BRANCH" 2>/dev/null)"
-    if [[ -n "$REMOTE_REV" && "$LOCAL_REV" != "$REMOTE_REV" ]]; then
-      if [[ -z "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]]; then
-        log "Aggiornamento disponibile: scarico l'ultima versione di Spokkio..."
-        if git -C "$ROOT_DIR" merge --ff-only "origin/$BRANCH" >>"$LOG_FILE" 2>&1; then
-          log "Spokkio aggiornato a $(git -C "$ROOT_DIR" rev-parse --short HEAD)."
-        else
-          log "Aggiornamento saltato: impossibile avanzare in fast-forward (storia divergente)."
-        fi
-      else
-        log "Aggiornamento disponibile ma ci sono modifiche locali non salvate: lo salto."
-      fi
-    fi
-  else
-    log "Controllo aggiornamenti non riuscito (probabilmente offline): continuo con la versione attuale."
-  fi
-fi
-
-# --- Postgres ---------------------------------------------------------------
-if ! pg_isready -q 2>/dev/null; then
-  log "Avvio PostgreSQL..."
-  brew services start postgresql@16 >>"$LOG_FILE" 2>&1
-  for _ in $(seq 1 20); do
-    pg_isready -q 2>/dev/null && break
-    sleep 1
-  done
-fi
-
-if ! pg_isready -q 2>/dev/null; then
-  log "ERRORE: PostgreSQL non risponde. Controlla $LOG_FILE"
-  osascript -e 'display alert "Spokkio" message "PostgreSQL non si è avviato. Controlla il log in ~/Library/Logs/Spokkio/spokkio.log"' 2>/dev/null
-  exit 1
-fi
-
-# --- Backup automatico del database -------------------------------------------
-# Un dump giornaliero prima di qualunque modifica allo schema (il prossimo
-# passo esegue "prisma db push", che può arrivare da un aggiornamento appena
-# scaricato): rete di sicurezza locale a costo zero, senza nulla da
-# configurare. Al massimo un backup al giorno, per non rallentare ogni avvio.
-BACKUP_DIR="$HOME/Library/Application Support/Spokkio/backups"
-mkdir -p "$BACKUP_DIR"
-TODAY_BACKUP="$BACKUP_DIR/spokkio-$(date +%Y%m%d).sql.gz"
-if [[ ! -f "$TODAY_BACKUP" ]]; then
-  DB_URL="$(grep '^DATABASE_URL=' "$ROOT_DIR/apps/api/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"')"
-  DB_URL="${DB_URL%%\?*}" # pg_dump non conosce il parametro "schema" che Prisma aggiunge alla connection string
-  if [[ -n "$DB_URL" ]] && pg_dump "$DB_URL" 2>>"$LOG_FILE" | gzip > "$TODAY_BACKUP.tmp"; then
-    mv "$TODAY_BACKUP.tmp" "$TODAY_BACKUP"
-    log "Backup del database salvato in $TODAY_BACKUP"
-    # Tiene solo gli ultimi 14 backup giornalieri.
-    ls -1t "$BACKUP_DIR"/spokkio-*.sql.gz 2>/dev/null | tail -n +15 | xargs rm -f
-  else
-    rm -f "$TODAY_BACKUP.tmp"
-    log "ATTENZIONE: backup del database non riuscito (continuo comunque l'avvio)."
-  fi
-fi
-
-# --- Build ------------------------------------------------------------------
-# Passi rapidi e idempotenti eseguiti sempre: così dopo un "git pull" l'app si
-# allinea da sola senza che tu debba ricordarti nulla dal terminale.
-# Lo schema viene sincronizzato con "db push" invece che con le migrazioni:
-# aggiunge le colonne nuove preservando i dati già presenti in locale.
-cd "$ROOT_DIR"
-log "Allineo dipendenze, pacchetto condiviso e schema del database..."
-# Se un aggiornamento ha introdotto librerie nuove vanno installate prima di
-# compilare, altrimenti la build fallisce su un modulo mancante.
-pnpm install >>"$LOG_FILE" 2>&1
-pnpm --filter @spokkio/shared build >>"$LOG_FILE" 2>&1
-pnpm --filter @spokkio/api exec prisma generate >>"$LOG_FILE" 2>&1
-pnpm --filter @spokkio/api exec prisma db push --skip-generate >>"$LOG_FILE" 2>&1
-
-# Le build pesanti girano solo se mancano o se il codice è cambiato dopo di esse.
-if [[ ! -f "$ROOT_DIR/apps/api/dist/main.js" ]] || \
-   [[ -n "$(find "$ROOT_DIR/apps/api/src" -newer "$ROOT_DIR/apps/api/dist/main.js" -print -quit 2>/dev/null)" ]]; then
-  log "Compilo l'API (può richiedere un minuto)..."
-  pnpm --filter @spokkio/api build >>"$LOG_FILE" 2>&1
-fi
-
-if [[ ! -d "$ROOT_DIR/apps/web/.next" ]] || \
-   [[ -n "$(find "$ROOT_DIR/apps/web/src" -newer "$ROOT_DIR/apps/web/.next" -print -quit 2>/dev/null)" ]]; then
-  log "Compilo l'interfaccia (può richiedere qualche minuto)..."
-  pnpm --filter @spokkio/web build >>"$LOG_FILE" 2>&1
-fi
-
-# --- Porte già occupate ------------------------------------------------------
-# Un avvio precedente può lasciare i suoi processi in vita: chiudere il
-# terminale non li uccide, e se l'app viene forzata a chiudersi il codice di
-# pulizia non fa in tempo a girare. Se ciò che occupa la porta è una vecchia
-# istanza di Spokkio la recuperiamo da soli (è l'unico comportamento sensato
-# per un'app che si riapre con un doppio click); se invece è un programma di
-# qualcun altro ci fermiamo e lo diciamo, senza spegnere roba non nostra.
-free_port() {
-  local port="$1"
-  local pids
-  pids="$(lsof -ti "tcp:$port" 2>/dev/null)"
-  [[ -z "$pids" ]] && return 0
-
-  for pid in $pids; do
-    local command_line
-    command_line="$(ps -p "$pid" -o command= 2>/dev/null)"
-
-    if [[ "$command_line" == *"$ROOT_DIR"* || "$command_line" == *"dist/main.js"* || "$command_line" == *"next start"* || "$command_line" == *"next-server"* ]]; then
-      log "Trovata una vecchia istanza di Spokkio sulla porta $port (PID $pid): la chiudo."
-      kill "$pid" 2>/dev/null
-      for _ in $(seq 1 10); do
-        kill -0 "$pid" 2>/dev/null || break
-        sleep 0.5
-      done
-      kill -9 "$pid" 2>/dev/null
-    else
-      log "ERRORE: la porta $port è usata da un altro programma (PID $pid): $command_line"
-      osascript -e "display alert \"Spokkio\" message \"La porta $port è occupata da un altro programma (PID $pid). Chiudilo e riapri Spokkio.\"" 2>/dev/null
-      exit 1
-    fi
-  done
-
-  # Il rilascio della porta non è immediato dopo la chiusura del processo.
-  for _ in $(seq 1 10); do
-    [[ -z "$(lsof -ti "tcp:$port" 2>/dev/null)" ]] && return 0
-    sleep 0.5
-  done
+alert() {
+  osascript -e "display alert \"Spokkio\" message \"$1\"" >/dev/null 2>&1
 }
 
-free_port 3001
-free_port 3000
+stop_previous_instance() {
+  local previous
+  previous="$(cat "$PID_FILE" 2>/dev/null)"
+  if [[ -n "$previous" && "$previous" != "$$" ]] && kill -0 "$previous" 2>/dev/null; then
+    log "Trovata un'istanza precedente ancora attiva (PID $previous): la chiudo prima di ripartire."
+    "$ROOT_DIR/scripts/spokkio-stop.sh" >/dev/null 2>&1
+  fi
+  echo "$$" > "$PID_FILE"
+}
 
-# --- API --------------------------------------------------------------------
-log "Avvio API su :3001"
-cd "$ROOT_DIR/apps/api"
-node dist/main.js >>"$LOG_FILE" 2>&1 &
-API_PID=$!
+# Si allinea da solo al branch remoto, ma solo con un fast-forward pulito. Se
+# l'aggiornamento riesce riparte dall'inizio con la versione nuova di questo
+# script (exec mantiene lo stesso PID, quindi il PID file resta valido).
+auto_update() {
+  [[ -n "${SPOKKIO_JUST_UPDATED:-}" ]] && return
+  git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return
 
-for _ in $(seq 1 30); do
-  curl -s -o /dev/null "http://localhost:3001/api/v1/auth/login" && break
-  sleep 1
-done
+  local branch local_rev remote_rev dirty
+  branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [[ -z "$branch" || "$branch" == "HEAD" ]] || ! git -C "$ROOT_DIR" fetch origin "$branch" --quiet 2>>"$LOG_FILE"; then
+    log "Controllo aggiornamenti non riuscito (probabilmente offline): continuo con la versione attuale."
+    return
+  fi
 
-# --- Web --------------------------------------------------------------------
-log "Avvio interfaccia su :3000"
-cd "$ROOT_DIR/apps/web"
-pnpm exec next start -p 3000 >>"$LOG_FILE" 2>&1 &
-WEB_PID=$!
+  local_rev="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null)"
+  remote_rev="$(git -C "$ROOT_DIR" rev-parse "origin/$branch" 2>/dev/null)"
+  [[ -z "$remote_rev" || "$local_rev" == "$remote_rev" ]] && return
 
-for _ in $(seq 1 30); do
-  curl -s -o /dev/null "http://localhost:3000" && break
-  sleep 1
-done
+  # pnpm-lock.yaml può essere riscritto da "pnpm install" con una versione di
+  # pnpm diversa: non è una modifica dell'utente e non deve bloccare per
+  # sempre gli aggiornamenti, quindi lo riportiamo alla versione del repository.
+  if git -C "$ROOT_DIR" status --porcelain -- pnpm-lock.yaml | grep -q .; then
+    git -C "$ROOT_DIR" checkout -- pnpm-lock.yaml 2>>"$LOG_FILE"
+  fi
+  dirty="$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)"
+  if [[ -n "$dirty" ]]; then
+    log "Aggiornamento disponibile ma ci sono modifiche locali non salvate, lo salto. File modificati:"
+    printf "%s\n" "$dirty" >>"$LOG_FILE"
+    return
+  fi
 
-log "Spokkio pronto: http://localhost:3000"
-open "http://localhost:3000"
+  log "Aggiornamento disponibile: scarico l'ultima versione di Spokkio..."
+  if git -C "$ROOT_DIR" merge --ff-only "origin/$branch" >>"$LOG_FILE" 2>&1; then
+    log "Spokkio aggiornato a $(git -C "$ROOT_DIR" rev-parse --short HEAD), riparto con la nuova versione."
+    export SPOKKIO_JUST_UPDATED=1
+    exec "$ROOT_DIR/scripts/spokkio-run.sh"
+  fi
+  log "Aggiornamento saltato: impossibile avanzare in fast-forward (storia divergente)."
+}
 
-# Resta vivo finché uno dei due processi è in esecuzione (chiudendo l'app
-# dal Dock/Monitoraggio Attività, il trap qui sopra li ferma entrambi).
-wait
+start_postgres() {
+  if ! pg_isready -q 2>/dev/null; then
+    log "Avvio PostgreSQL..."
+    brew services start postgresql@16 >>"$LOG_FILE" 2>&1
+    for _ in $(seq 1 20); do
+      pg_isready -q 2>/dev/null && break
+      sleep 1
+    done
+  fi
+  if ! pg_isready -q 2>/dev/null; then
+    log "ERRORE: PostgreSQL non risponde. Controlla $LOG_FILE"
+    alert "PostgreSQL non si è avviato. Controlla il log in ~/Library/Logs/Spokkio/spokkio.log"
+    return 1
+  fi
+}
+
+# Un dump al giorno, prima di qualunque modifica allo schema (il passo dopo
+# esegue "prisma db push", che può arrivare da un aggiornamento appena
+# scaricato). Tiene gli ultimi 14.
+backup_database() {
+  local backup_dir="$STATE_DIR/backups" today db_url
+  mkdir -p "$backup_dir"
+  today="$backup_dir/spokkio-$(date +%Y%m%d).sql.gz"
+  [[ -f "$today" ]] && return
+
+  db_url="$(grep '^DATABASE_URL=' "$ROOT_DIR/apps/api/.env" 2>/dev/null | cut -d '=' -f2- | tr -d '"')"
+  db_url="${db_url%%\?*}" # pg_dump non conosce il parametro "schema" che Prisma aggiunge
+  if [[ -n "$db_url" ]] && pg_dump "$db_url" 2>>"$LOG_FILE" | gzip > "$today.tmp"; then
+    mv "$today.tmp" "$today"
+    log "Backup del database salvato in $today"
+    ls -1t "$backup_dir"/spokkio-*.sql.gz 2>/dev/null | tail -n +15 | xargs rm -f
+  else
+    rm -f "$today.tmp"
+    log "ATTENZIONE: backup del database non riuscito (continuo comunque l'avvio)."
+  fi
+}
+
+# Le build pesanti girano solo se mancano o se il codice (incluso il pacchetto
+# condiviso) è cambiato dopo l'ultima compilazione.
+needs_build() {
+  local marker="$1" src="$2"
+  [[ ! -e "$marker" ]] && return 0
+  [[ -n "$(find "$src" "$ROOT_DIR/packages/shared/src" -newer "$marker" -print -quit 2>/dev/null)" ]]
+}
+
+build() {
+  cd "$ROOT_DIR" || return 1
+  log "Allineo dipendenze, pacchetto condiviso e schema del database..."
+  # --frozen-lockfile non riscrive pnpm-lock.yaml; se fallisce (lockfile non
+  # allineato) si ripiega su un install normale.
+  pnpm install --frozen-lockfile >>"$LOG_FILE" 2>&1 || pnpm install >>"$LOG_FILE" 2>&1
+  pnpm --filter @spokkio/shared build >>"$LOG_FILE" 2>&1
+  pnpm --filter @spokkio/api exec prisma generate >>"$LOG_FILE" 2>&1
+  # "db push" invece delle migrazioni: aggiunge le colonne nuove preservando
+  # i dati già presenti in locale.
+  pnpm --filter @spokkio/api exec prisma db push --skip-generate >>"$LOG_FILE" 2>&1
+
+  if needs_build "$ROOT_DIR/apps/api/dist/main.js" "$ROOT_DIR/apps/api/src"; then
+    log "Compilo l'API (può richiedere un minuto)..."
+    pnpm --filter @spokkio/api build >>"$LOG_FILE" 2>&1 || { alert "Compilazione dell'API fallita. Dettagli in ~/Library/Logs/Spokkio/spokkio.log"; return 1; }
+  fi
+  if needs_build "$ROOT_DIR/apps/web/.next/BUILD_ID" "$ROOT_DIR/apps/web/src"; then
+    log "Compilo l'interfaccia (può richiedere qualche minuto)..."
+    pnpm --filter @spokkio/web build >>"$LOG_FILE" 2>&1 || { alert "Compilazione dell'interfaccia fallita. Dettagli in ~/Library/Logs/Spokkio/spokkio.log"; return 1; }
+  fi
+}
+
+wait_for() {
+  local url="$1"
+  for _ in $(seq 1 60); do
+    curl -s -o /dev/null "$url" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+main() {
+  trap cleanup EXIT
+  trap 'cleanup; exit 0' INT TERM HUP
+
+  stop_previous_instance
+  log "Avvio Spokkio da $ROOT_DIR"
+  auto_update
+  start_postgres || exit 1
+  backup_database
+  build || exit 1
+
+  if ! free_spokkio_port 3001 || ! free_spokkio_port 3000; then
+    alert "Le porte 3000 o 3001 sono occupate da un altro programma. Chiudilo e riapri Spokkio (dettagli nel log)."
+    exit 1
+  fi
+
+  log "Avvio API su :3001"
+  cd "$ROOT_DIR/apps/api" || exit 1
+  node dist/main.js >>"$LOG_FILE" 2>&1 &
+  API_PID=$!
+  wait_for "http://localhost:3001/api/v1/auth/login"
+
+  log "Avvio interfaccia su :3000"
+  cd "$ROOT_DIR/apps/web" || exit 1
+  pnpm exec next start -p 3000 >>"$LOG_FILE" 2>&1 &
+  WEB_PID=$!
+  wait_for "http://localhost:3000"
+
+  log "Spokkio pronto: http://localhost:3000"
+  open "http://localhost:3000"
+
+  # Resta attivo finché API e interfaccia girano entrambe. Se una delle due si
+  # ferma da sola lo segnaliamo e chiudiamo tutto, invece di lasciare un'app
+  # aperta a metà. (Niente "wait -n": la bash di macOS è la 3.2.)
+  while kill -0 "$API_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do
+    sleep 2
+  done
+  log "ERRORE: l'API o l'interfaccia si sono fermate inaspettatamente."
+  alert "Spokkio si è fermato inaspettatamente. Dettagli in ~/Library/Logs/Spokkio/spokkio.log"
+  exit 1
+}
+
+main "$@"; exit $?

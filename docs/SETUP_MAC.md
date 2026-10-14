@@ -130,6 +130,16 @@ Poi:
 
 In alternativa, se hai già installato l'app con `scripts/build-mac-app.sh` (vedi il changelog di Fase 1.1), apri semplicemente **Spokkio** da Launchpad/Applicazioni invece dei due terminali: fa tutto da sola, incluso quanto descritto qui sotto.
 
+## Chiudere Spokkio
+
+Chiudi Spokkio come qualunque app: **Cmd+Q**, oppure tasto destro sull'icona nel Dock → **Esci**. API e interfaccia si fermano davvero, così al prossimo doppio click l'app riparte da capo (e si aggiorna). Se Spokkio è già aperto, un doppio click sull'icona riapre solo il browser.
+
+Se l'app si fosse bloccata comunque, dal Terminale nella cartella del progetto:
+
+```bash
+./scripts/spokkio-stop.sh
+```
+
 ## Aggiornamenti e backup automatici
 
 Ad ogni avvio, **Spokkio.app** (tramite `scripts/spokkio-run.sh`) fa da sola due cose, senza bisogno di ricordartele:

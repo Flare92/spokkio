@@ -283,6 +283,27 @@ export type DeleteAllContactsInput = z.infer<typeof DeleteAllContactsInput>;
 export const DeleteAllContactsOutput = z.object({ deleted: z.number().int() });
 export type DeleteAllContactsOutput = z.infer<typeof DeleteAllContactsOutput>;
 
+// Elimina una "lista" di clienti per categoria: o togliendo solo l'etichetta
+// (i contatti restano), o eliminando del tutto i contatti che ce l'hanno.
+// Vale anche per le sottocategorie ("Clienti" comprende "Clienti > VIP").
+export const RemoveCategoryInput = z.object({
+  teamId: z.string().uuid(),
+  category: z.string().min(1),
+  deleteContacts: z.boolean().default(false),
+});
+export type RemoveCategoryInput = z.infer<typeof RemoveCategoryInput>;
+
+export const RemoveCategoryOutput = z.object({
+  contactsUpdated: z.number().int(),
+  contactsDeleted: z.number().int(),
+});
+export type RemoveCategoryOutput = z.infer<typeof RemoveCategoryOutput>;
+
+// I contatti del segmento non vengono toccati. Un segmento già usato da una
+// campagna non si può eliminare: è lo storico dei suoi destinatari.
+export const DeleteSegmentInput = z.object({ teamId: z.string().uuid(), segmentId: z.string().uuid() });
+export type DeleteSegmentInput = z.infer<typeof DeleteSegmentInput>;
+
 export const CONTACTS_TOOLS = {
   "contacts.import": { input: ImportContactsInput, output: ImportContactsOutput },
   "contacts.tag": { input: TagContactsInput, output: z.object({ updated: z.number().int() }) },
@@ -305,4 +326,6 @@ export const CONTACTS_TOOLS = {
   "contacts.deleteCustomField": { input: DeleteCustomFieldInput, output: z.object({ updated: z.number().int() }) },
   "contacts.delete": { input: DeleteContactsInput, output: DeleteContactsOutput },
   "contacts.deleteAll": { input: DeleteAllContactsInput, output: DeleteAllContactsOutput },
+  "contacts.removeCategory": { input: RemoveCategoryInput, output: RemoveCategoryOutput },
+  "contacts.deleteSegment": { input: DeleteSegmentInput, output: z.object({ deleted: z.literal(true) }) },
 } as const;

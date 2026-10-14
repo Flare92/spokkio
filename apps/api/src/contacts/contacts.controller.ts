@@ -18,6 +18,8 @@ import {
   DeleteCustomFieldInput,
   DeleteContactsInput,
   DeleteAllContactsInput,
+  RemoveCategoryInput,
+  DeleteSegmentInput,
 } from "@spokkio/shared";
 import { ContactsService } from "./contacts.service";
 import { GoogleSheetService } from "./google-sheet.service";
@@ -137,6 +139,18 @@ export class ContactsController {
   @Post("delete")
   delete(@Body(new ZodValidationPipe(DeleteContactsInput)) body: DeleteContactsInput) {
     return this.contacts.deleteContacts(body);
+  }
+
+  // tool: contacts.removeCategory
+  @Post("categories/remove")
+  removeCategory(@Body(new ZodValidationPipe(RemoveCategoryInput)) body: RemoveCategoryInput) {
+    return this.contacts.removeCategory(body);
+  }
+
+  // tool: contacts.deleteSegment
+  @Post("segments/delete")
+  deleteSegment(@Body(new ZodValidationPipe(DeleteSegmentInput)) body: DeleteSegmentInput) {
+    return this.contacts.deleteSegment(body);
   }
 
   // tool: contacts.deleteAll

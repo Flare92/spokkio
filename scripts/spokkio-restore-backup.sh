@@ -10,7 +10,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="$HOME/Library/Application Support/Spokkio/backups"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
 
-mapfile -t BACKUPS < <(ls -1t "$BACKUP_DIR"/spokkio-*.sql.gz 2>/dev/null)
+# Niente mapfile: la bash di macOS è la 3.2.
+BACKUPS=()
+while IFS= read -r line; do BACKUPS+=("$line"); done < <(ls -1t "$BACKUP_DIR"/spokkio-*.sql.gz 2>/dev/null)
 if [[ ${#BACKUPS[@]} -eq 0 ]]; then
   echo "Nessun backup trovato in $BACKUP_DIR"
   exit 1
@@ -23,7 +25,7 @@ done
 
 read -rp "Quale vuoi ripristinare? [1]: " CHOICE
 CHOICE="${CHOICE:-1}"
-SELECTED="${BACKUPS[$((CHOICE - 1))]}"
+SELECTED="${BACKUPS[$((CHOICE - 1))]:-}"
 if [[ -z "$SELECTED" ]]; then
   echo "Scelta non valida."
   exit 1
