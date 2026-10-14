@@ -53,7 +53,7 @@ DOMAIN="${PUBLIC_URL#https://}"
 PORT="$(env_value PORT)"; PORT="${PORT:-3001}"
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "$OK Spokkio è acceso (porta $PORT)"
-  local_answer="$(curl -s --max-time 5 "http://localhost:$PORT/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=spokkio-ok")"
+  local_answer="$(curl -s --max-time 5 "http://localhost:$PORT/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=spokkio-ok")"
   if [[ "$local_answer" == "spokkio-ok" ]]; then
     echo "$OK Spokkio accetta il token del .env"
   else
@@ -96,7 +96,7 @@ fi
 
 # 4. Test reale da internet (come fa Meta)
 if [[ -n "$DOMAIN" && "$DOMAIN" != "$PUBLIC_URL" ]]; then
-  answer="$(curl -s --max-time 10 -H "ngrok-skip-browser-warning: 1" "$PUBLIC_URL/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=spokkio-ok")"
+  answer="$(curl -s --max-time 10 -H "ngrok-skip-browser-warning: 1" "$PUBLIC_URL/api/v1/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=$TOKEN&hub.challenge=spokkio-ok")"
   if [[ "$answer" == "spokkio-ok" ]]; then
     echo "$OK Test da internet riuscito: Meta potrà verificare il webhook"
   else
@@ -108,7 +108,7 @@ echo
 if [[ "$problems" -eq 0 ]]; then
   echo "🎉 Tutto pronto. Su Meta → WhatsApp → Configurazione → Webhook incolla:"
   echo
-  echo "   URL di callback:    $PUBLIC_URL/webhooks/whatsapp"
+  echo "   URL di callback:    $PUBLIC_URL/api/v1/webhooks/whatsapp"
   echo "   Token di verifica:  $TOKEN"
   echo
   echo "Poi 'Verifica e salva' e in 'Gestisci' attiva: messages, message_template_status_update"
