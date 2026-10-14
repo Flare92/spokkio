@@ -1,5 +1,5 @@
 import { Body, Controller, Post, UseGuards } from "@nestjs/common";
-import { CreateTemplateInput, ListTemplatesInput, SubmitTemplateInput } from "@spokkio/shared";
+import { CreateTemplateInput, ListTemplatesInput, SubmitTemplateInput, SyncTemplateStatusInput } from "@spokkio/shared";
 import { TemplatesService } from "./templates.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
 import { JwtAuthGuard } from "../auth/jwt-auth.guard";
@@ -26,5 +26,11 @@ export class TemplatesController {
   @Post("submit")
   submit(@Body(new ZodValidationPipe(SubmitTemplateInput)) body: SubmitTemplateInput) {
     return this.templates.submitTemplate(body);
+  }
+
+  // tool: templates.syncStatus
+  @Post("sync-status")
+  syncStatus(@Body(new ZodValidationPipe(SyncTemplateStatusInput)) body: SyncTemplateStatusInput) {
+    return this.templates.syncStatus(body);
   }
 }

@@ -4,6 +4,7 @@ import type {
   TemplateOutput,
   ListTemplatesInput,
   SubmitTemplateInput,
+  SyncTemplateStatusInput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
@@ -88,6 +89,37 @@ export class TemplatesService {
           : { submissionError: result.error },
     });
 
+    return this.toOutput(updated);
+  }
+
+  // Tool: templates.syncStatus
+  async syncStatus(input: SyncTemplateStatusInput): Promise<TemplateOutput> {
+    const template = await this.prisma.template.findFirst({
+      where: { id: input.templateId, teamId: input.teamId },
+    });
+    if (!template) throw new NotFoundException("Template not found");
+    if (!template.metaTemplateId) throw new BadRequestException("Il template non è ancora stato sottomesso a Meta");
+
+    const connection = await this.prisma.whatsAppConnection.findUnique({ where: { teamId: input.teamId } });
+    if (!connection) throw new BadRequestException("Collega prima un numero WhatsApp dalle Impostazioni");
+
+    const result = await this.whatsapp.getTemplateStatus({
+      metaTemplateId: template.metaTemplateId,
+      accessToken: connection.accessTokenEncrypted,
+    });
+    if ("error" in result) throw new BadRequestException(`Meta non ha risposto: ${result.error}`);
+
+    // PAUSED/DISABLED: Meta ha bloccato il template (di solito per segnalazioni
+    // degli utenti) — non è utilizzabile, quindi lo trattiamo come rifiutato.
+    const blocked = result.status === "PAUSED" || result.status === "DISABLED";
+    const updated = await this.prisma.template.update({
+      where: { id: template.id },
+      data: {
+        status:
+          result.status === "APPROVED" ? "APPROVED" : result.status === "REJECTED" || blocked ? "REJECTED" : "PENDING_REVIEW",
+        rejectionReason: blocked ? `Template ${result.status === "PAUSED" ? "in pausa" : "disattivato"} da Meta` : result.rejectedReason,
+      },
+    });
     return this.toOutput(updated);
   }
 

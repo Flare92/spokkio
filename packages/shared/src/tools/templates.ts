@@ -40,8 +40,15 @@ export type ListTemplatesInput = z.infer<typeof ListTemplatesInput>;
 export const SubmitTemplateInput = z.object({ teamId: z.string().uuid(), templateId: z.string().uuid() });
 export type SubmitTemplateInput = z.infer<typeof SubmitTemplateInput>;
 
+// Chiede a Meta lo stato attuale di un template già sottomesso. Serve quando
+// il webhook non era collegato (o ha perso la notifica): Meta comunica
+// l'esito una volta sola e non lo rimanda.
+export const SyncTemplateStatusInput = z.object({ teamId: z.string().uuid(), templateId: z.string().uuid() });
+export type SyncTemplateStatusInput = z.infer<typeof SyncTemplateStatusInput>;
+
 export const TEMPLATES_TOOLS = {
   "templates.create": { input: CreateTemplateInput, output: TemplateOutput },
   "templates.list": { input: ListTemplatesInput, output: z.array(TemplateOutput) },
   "templates.submit": { input: SubmitTemplateInput, output: TemplateOutput },
+  "templates.syncStatus": { input: SyncTemplateStatusInput, output: TemplateOutput },
 } as const;

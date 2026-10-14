@@ -55,15 +55,24 @@ Il token temporaneo dura 24 ore — per uso continuativo serve un token da un Sy
 - Genera un token con permesso **`whatsapp_business_messaging`** (e `whatsapp_business_management` se vuoi gestire i template da API)
 - Guida ufficiale: **[developers.facebook.com/docs/marketing-api/system-users/create-manage](https://developers.facebook.com/docs/marketing-api/system-users/create-manage)**
 
-## 7. Webhook (per ricevere messaggi e stati di consegna)
+## 7. Webhook (per ricevere messaggi, stati di consegna ed esito dei template)
 
-- Nella dashboard della tua app → **WhatsApp → Configurazione**
-- Guida ufficiale: **[developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks](https://developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks)**
-- Callback URL: il tuo endpoint ngrok + `/api/v1/webhooks/whatsapp` (es. `https://abcd1234.ngrok-free.app/api/v1/webhooks/whatsapp`)
-- Verify token: il valore di `WHATSAPP_WEBHOOK_VERIFY_TOKEN` in `apps/api/.env`
-- Iscriviti almeno ai campi `messages` e `message_template_status_update`
-- ngrok: **[ngrok.com](https://ngrok.com/)** → scarica e, per un authtoken permanente, **[dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)**
-- Imposta anche `PUBLIC_BASE_URL` in `apps/api/.env` sullo stesso indirizzo ngrok (es. `https://abcd1234.ngrok-free.app`, senza il path): è l'URL che i link tracciati nelle campagne usano per il redirect, e deve essere raggiungibile dal telefono del cliente perché i click risultino davvero in analytics.
+Meta deve poter raggiungere Spokkio da internet: in locale serve **ngrok**, che crea un indirizzo pubblico verso il tuo Mac.
+
+1. Installa ngrok (lo fa già `scripts/setup-mac.sh`) e registrati gratis su **[dashboard.ngrok.com/signup](https://dashboard.ngrok.com/signup)**.
+2. Copia il tuo authtoken da **[dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken)** e nel Terminale: `ngrok config add-authtoken IL_TUO_TOKEN`
+3. Prendi il **dominio statico gratuito** da **[dashboard.ngrok.com/domains](https://dashboard.ngrok.com/domains)** (es. `nome-scelto.ngrok-free.app`): non cambia a ogni riavvio, così su Meta lo imposti una volta sola.
+4. Con Spokkio aperto, in un Terminale lasciato aperto: `ngrok http --url=nome-scelto.ngrok-free.app 3001`
+5. In `apps/api/.env` imposta `PUBLIC_BASE_URL="https://nome-scelto.ngrok-free.app"` e copia il valore di `WHATSAPP_WEBHOOK_VERIFY_TOKEN` (senza virgolette). Chiudi e riapri Spokkio (Cmd+Q) per applicare il `.env`.
+6. Su **[developers.facebook.com/apps](https://developers.facebook.com/apps/)** → la tua app → **WhatsApp → Configurazione** → sezione Webhook → **Modifica**:
+   - URL di callback: `https://nome-scelto.ngrok-free.app/api/v1/webhooks/whatsapp`
+   - Token di verifica: il valore copiato al punto 5
+   - **Verifica e salva**
+7. Sotto, in **Campi webhook** → **Gestisci**: attiva (Iscriviti) **`messages`** e **`message_template_status_update`**.
+
+Guida ufficiale: **[developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks](https://developers.facebook.com/docs/whatsapp/cloud-api/guides/set-up-webhooks)**
+
+Il webhook non è retroattivo: Meta manda ogni notifica una volta sola. Per un template approvato mentre il webhook era scollegato usa il pulsante **"aggiorna stato da Meta"** accanto al template, in Campagne. ngrok va tenuto aperto mentre usi Spokkio: se è chiuso, le notifiche di quel periodo vanno perse (per i template c'è sempre il pulsante).
 
 ## 8. Collega tutto a Spokkio e invia il primo messaggio di test
 

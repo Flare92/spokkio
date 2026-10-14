@@ -249,6 +249,27 @@ export class WhatsAppService {
   // numero su Meta. Serve soprattutto per i token temporanei da 24 ore, che
   // scadono in silenzio: senza questo controllo l'utente scoprirebbe il
   // problema solo quando una campagna fallisce.
+  async getTemplateStatus(params: {
+    metaTemplateId: string;
+    accessToken: string;
+  }): Promise<{ status: string; rejectedReason: string | null } | { error: string }> {
+    try {
+      const response = await fetch(`${GRAPH_BASE_URL}/${params.metaTemplateId}?fields=status,rejected_reason`, {
+        headers: { Authorization: `Bearer ${params.accessToken}` },
+      });
+      const json = (await response.json()) as {
+        status?: string;
+        rejected_reason?: string;
+        error?: { message: string };
+      };
+      if (!response.ok || json.error || !json.status) return { error: json.error?.message ?? `HTTP ${response.status}` };
+      const reason = json.rejected_reason && json.rejected_reason !== "NONE" ? json.rejected_reason : null;
+      return { status: json.status, rejectedReason: reason };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "errore di rete" };
+    }
+  }
+
   async verifyCredentials(params: {
     phoneNumberId: string;
     accessToken: string;

@@ -966,6 +966,19 @@ function TemplatesSection({
     }
   }
 
+  async function syncStatus(templateId: string) {
+    setSubmittingId(templateId);
+    setError(null);
+    try {
+      await callTool("/templates/sync-status", { teamId, templateId });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Aggiornamento stato fallito");
+    } finally {
+      setSubmittingId(null);
+    }
+  }
+
   async function submitToMeta(templateId: string) {
     setSubmittingId(templateId);
     setError(null);
@@ -1080,12 +1093,22 @@ function TemplatesSection({
                     {submittingId === t.id ? "invio…" : "sottometti a Meta"}
                   </button>
                 )}
+                {t.metaTemplateId && t.status !== "APPROVED" && (
+                  <button
+                    onClick={() => syncStatus(t.id)}
+                    disabled={submittingId === t.id}
+                    className="rounded border px-2 py-0.5 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                  >
+                    {submittingId === t.id ? "controllo…" : "aggiorna stato da Meta"}
+                  </button>
+                )}
               </span>
             </div>
             {t.rejectionReason && <p className="mt-1 text-xs text-red-600">Rifiutato da Meta: {t.rejectionReason}</p>}
             {t.submissionError && <p className="mt-1 text-xs text-red-600">Sottomissione fallita: {t.submissionError}</p>}
             {t.metaTemplateId && t.status === "PENDING_REVIEW" && (
-              <p className="mt-1 text-xs text-gray-400">In revisione su Meta — l&apos;esito arriva automaticamente.</p>
+              <p className="mt-1 text-xs text-gray-400">In revisione su Meta — l&apos;esito arriva da solo se il webhook è collegato, altrimenti premi
+                &quot;aggiorna stato da Meta&quot;.</p>
             )}
           </li>
         ))}
