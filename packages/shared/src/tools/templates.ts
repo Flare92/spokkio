@@ -8,6 +8,8 @@ export const CreateTemplateInput = z.object({
   language: z.string().min(2).max(10).default("it"),
   bodyText: z.string().min(1),
   variables: z.array(z.string()).default([]),
+  // Immagine (caricata prima con media.upload) mostrata sopra il testo.
+  headerImageId: z.string().uuid().optional(),
 });
 export type CreateTemplateInput = z.infer<typeof CreateTemplateInput>;
 
@@ -25,6 +27,7 @@ export const TemplateOutput = z.object({
   // templates.submit) — null se il template è ancora solo locale.
   metaTemplateId: z.string().nullable(),
   submissionError: z.string().nullable(),
+  headerImageId: z.string().uuid().nullable(),
 });
 export type TemplateOutput = z.infer<typeof TemplateOutput>;
 

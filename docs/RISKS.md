@@ -17,6 +17,7 @@
 - **Click tracciati solo sui link nelle variabili dei template.** `campaigns.service.ts` sostituisce ogni variabile che è un URL con un redirect univoco (`/t/:token`) che registra il click prima di rimandare al link reale — ma un link scritto come testo fisso nel corpo del template (non come variabile) non viene ancora tracciato.
 - **Onboarding "wizard con AI conversazionale"** richiesto dal documento di prodotto non è implementato: l'onboarding attuale è un form guidato in 2 passi, senza assistente conversazionale. È il gap più visibile rispetto alla visione §7.3 del master prompt.
 - **Integrazione Shopify/WooCommerce/Google Sheets/Zapier** (richiesta in Fase 1) non ancora costruita — nessun modulo dedicato esiste ancora.
+- **Immagini: solo una per messaggio, niente carosello.** I template possono avere un'immagine (JPG/PNG, max 5 MB) sopra il testo, sostituibile campagna per campagna; i template "carosello" di Meta (più card scorrevoli) e i pulsanti non sono ancora supportati. L'invio dell'esempio a Meta per l'approvazione usa la Resumable Upload API e ricava l'id dell'app dal token: se il token non lo espone, la sottomissione mostra l'errore nel template.
 - **Rate card Meta hardcoded** in `apps/api/src/campaigns/pricing.ts` — va sincronizzata periodicamente con il listino ufficiale Meta (cambia nel tempo) o resa configurabile da un pannello admin.
 - **Cambi di piano/prezzo con preavviso ≥7 giorni**: lo schema (`Subscription.pendingChangeEffectiveAt`) esiste ma non c'è ancora nessun flusso che programmi o notifichi un cambio piano.
 

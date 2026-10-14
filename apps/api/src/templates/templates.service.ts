@@ -7,12 +7,14 @@ import type {
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { MediaService } from "../media/media.service";
 
 @Injectable()
 export class TemplatesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
+    private readonly media: MediaService,
   ) {}
 
   // Tool: templates.create
@@ -21,6 +23,7 @@ export class TemplatesService {
   // ancora correggere testo/categoria prima di consumare un tentativo di
   // revisione.
   async createTemplate(input: CreateTemplateInput): Promise<TemplateOutput> {
+    if (input.headerImageId) await this.media.assertBelongsToTeam(input.teamId, input.headerImageId);
     const template = await this.prisma.template.create({
       data: {
         teamId: input.teamId,
@@ -29,6 +32,7 @@ export class TemplatesService {
         language: input.language,
         bodyText: input.bodyText,
         variables: input.variables,
+        headerImageId: input.headerImageId ?? null,
         status: "PENDING_REVIEW",
       },
     });
@@ -48,6 +52,24 @@ export class TemplatesService {
       throw new BadRequestException("Collega prima un numero WhatsApp dalle Impostazioni");
     }
 
+    let headerImageHandle: string | undefined;
+    if (template.headerImageId) {
+      const image = await this.media.getData(template.headerImageId);
+      const uploaded = await this.whatsapp.uploadTemplateExampleImage({
+        accessToken: connection.accessTokenEncrypted,
+        data: image.data,
+        mimeType: image.mimeType,
+      });
+      if ("error" in uploaded) {
+        const failed = await this.prisma.template.update({
+          where: { id: template.id },
+          data: { submissionError: `Caricamento immagine di esempio: ${uploaded.error}` },
+        });
+        return this.toOutput(failed);
+      }
+      headerImageHandle = uploaded.handle;
+    }
+
     const result = await this.whatsapp.submitTemplate({
       wabaId: connection.wabaId,
       accessToken: connection.accessTokenEncrypted,
@@ -55,6 +77,7 @@ export class TemplatesService {
       category: template.category,
       language: template.language,
       bodyText: template.bodyText,
+      headerImageHandle,
     });
 
     const updated = await this.prisma.template.update({
@@ -87,6 +110,7 @@ export class TemplatesService {
     rejectionReason: string | null;
     metaTemplateId: string | null;
     submissionError: string | null;
+    headerImageId: string | null;
   }): TemplateOutput {
     return {
       id: t.id,
@@ -98,6 +122,7 @@ export class TemplatesService {
       rejectionReason: t.rejectionReason,
       metaTemplateId: t.metaTemplateId,
       submissionError: t.submissionError,
+      headerImageId: t.headerImageId,
     };
   }
 }

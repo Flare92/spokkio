@@ -53,3 +53,34 @@ export async function callTool<TOutput = unknown>(path: string, body: unknown): 
 
   return res.json();
 }
+
+export interface UploadedImage {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+// Controlla formato e dimensione prima dell'invio, così l'errore arriva
+// subito e in italiano invece che dopo l'upload.
+export async function uploadImage(teamId: string, file: File): Promise<UploadedImage> {
+  if (file.type !== "image/jpeg" && file.type !== "image/png") {
+    throw new Error("Formato non supportato da WhatsApp: usa un'immagine JPG o PNG");
+  }
+  if (file.size > MAX_IMAGE_BYTES) throw new Error("L'immagine supera i 5 MB consentiti da WhatsApp");
+
+  const dataBase64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("Impossibile leggere il file"));
+    reader.readAsDataURL(file);
+  });
+  return callTool<UploadedImage>("/media/upload", { teamId, filename: file.name, mimeType: file.type, dataBase64 });
+}
+
+export async function loadImageDataUrl(teamId: string, mediaId: string): Promise<string> {
+  const media = await callTool<{ mimeType: string; dataBase64: string }>("/media/get", { teamId, mediaId });
+  return `data:${media.mimeType};base64,${media.dataBase64}`;
+}

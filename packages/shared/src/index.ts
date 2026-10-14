@@ -7,4 +7,5 @@ export * from "./tools/automations";
 export * from "./tools/analytics";
 export * from "./tools/billing";
 export * from "./tools/whatsapp";
+export * from "./tools/media";
 export * from "./tools/registry";

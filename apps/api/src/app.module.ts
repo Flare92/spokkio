@@ -11,6 +11,7 @@ import { AnalyticsModule } from "./analytics/analytics.module";
 import { BillingModule } from "./billing/billing.module";
 import { WhatsAppModule } from "./whatsapp/whatsapp.module";
 import { TrackingModule } from "./tracking/tracking.module";
+import { MediaModule } from "./media/media.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TrackingModule } from "./tracking/tracking.module";
     AnalyticsModule,
     BillingModule,
     TrackingModule,
+    MediaModule,
   ],
 })
 export class AppModule {}

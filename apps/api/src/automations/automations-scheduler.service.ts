@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { MediaService } from "../media/media.service";
 
 const EVAL_WINDOW_MINUTES = 5; // must match the cron interval below
 
@@ -17,6 +18,7 @@ export class AutomationsSchedulerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
+    private readonly media: MediaService,
   ) {}
 
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -167,6 +169,11 @@ export class AutomationsSchedulerService {
     });
 
     try {
+      // Il media id è in cache sull'immagine: in pratica viene caricato su
+      // Meta una volta e riusato per tutte le automazioni dei giorni seguenti.
+      const headerImageMediaId = automation.template.headerImageId
+        ? await this.media.ensureMetaMediaId(automation.template.headerImageId, waConnection)
+        : undefined;
       const result = await this.whatsapp.sendTemplateMessage({
         phoneNumberId: waConnection.phoneNumberId,
         accessToken: waConnection.accessTokenEncrypted,
@@ -175,6 +182,7 @@ export class AutomationsSchedulerService {
         language: automation.template.language,
         variables: [],
         category: automation.template.category,
+        headerImageMediaId,
       });
       await this.prisma.message.update({
         where: { id: message.id },
@@ -206,5 +214,5 @@ interface AutomationWithTemplate {
   offsetMinutes: number;
   matchCategories: string[];
   matchTags: string[];
-  template: { name: string; language: string; category: any; bodyText: string };
+  template: { name: string; language: string; category: any; bodyText: string; headerImageId: string | null };
 }

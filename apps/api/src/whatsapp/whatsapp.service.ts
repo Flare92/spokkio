@@ -13,6 +13,8 @@ export interface SendTemplateMessageParams {
   language: string;
   variables: string[];
   category: MessageCategory;
+  // Media id restituito da uploadMedia, per i template con header immagine.
+  headerImageMediaId?: string;
 }
 
 export interface SendTemplateMessageResult {
@@ -45,6 +47,9 @@ export class WhatsAppService {
     category: MessageCategory;
     language: string;
     bodyText: string;
+    // Handle dell'immagine di esempio (da uploadTemplateExampleImage): Meta
+    // lo richiede per valutare un template con header immagine.
+    headerImageHandle?: string;
   }): Promise<{ metaTemplateId: string } | { error: string }> {
     const variableCount = new Set(
       Array.from(params.bodyText.matchAll(/\{\{(\d+)\}\}/g)).map((m) => Number(m[1])),
@@ -65,7 +70,9 @@ export class WhatsAppService {
           name: params.name,
           category: params.category,
           language: params.language,
-          components: [bodyComponent],
+          components: params.headerImageHandle
+            ? [{ type: "HEADER", format: "IMAGE", example: { header_handle: [params.headerImageHandle] } }, bodyComponent]
+            : [bodyComponent],
         }),
       });
 
@@ -74,6 +81,68 @@ export class WhatsAppService {
         return { error: json.error?.message ?? `HTTP ${response.status}` };
       }
       return { metaTemplateId: json.id };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "errore di rete" };
+    }
+  }
+
+  // Carica un'immagine sul numero WhatsApp e restituisce il media id da usare
+  // nell'header dei messaggi: evita di dover esporre l'immagine su un URL
+  // pubblico (Spokkio gira in locale). L'id resta valido circa 30 giorni.
+  async uploadMedia(params: {
+    phoneNumberId: string;
+    accessToken: string;
+    data: Buffer;
+    mimeType: string;
+    filename: string;
+  }): Promise<string> {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    form.append("type", params.mimeType);
+    form.append("file", new Blob([params.data], { type: params.mimeType }), params.filename);
+
+    const response = await fetch(`${GRAPH_BASE_URL}/${params.phoneNumberId}/media`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+      body: form,
+    });
+    const json = (await response.json()) as { id?: string; error?: { message: string } };
+    if (!response.ok || json.error || !json.id) {
+      throw new Error(json.error?.message ?? `Upload immagine fallito (HTTP ${response.status})`);
+    }
+    return json.id;
+  }
+
+  // L'immagine di esempio di un template va caricata con la Resumable Upload
+  // API, che è legata all'app Meta (non al numero): l'id dell'app si ricava
+  // dal token stesso, così non serve chiederlo all'utente.
+  async uploadTemplateExampleImage(params: {
+    accessToken: string;
+    data: Buffer;
+    mimeType: string;
+  }): Promise<{ handle: string } | { error: string }> {
+    try {
+      const token = encodeURIComponent(params.accessToken);
+      const debug = await fetch(`${GRAPH_BASE_URL}/debug_token?input_token=${token}&access_token=${token}`);
+      const debugJson = (await debug.json()) as { data?: { app_id?: string }; error?: { message: string } };
+      const appId = debugJson.data?.app_id;
+      if (!appId) return { error: debugJson.error?.message ?? "Impossibile ricavare l'app Meta dal token" };
+
+      const session = await fetch(
+        `${GRAPH_BASE_URL}/${appId}/uploads?file_length=${params.data.length}&file_type=${encodeURIComponent(params.mimeType)}&access_token=${token}`,
+        { method: "POST" },
+      );
+      const sessionJson = (await session.json()) as { id?: string; error?: { message: string } };
+      if (!sessionJson.id) return { error: sessionJson.error?.message ?? "Apertura upload fallita" };
+
+      const upload = await fetch(`${GRAPH_BASE_URL}/${sessionJson.id}`, {
+        method: "POST",
+        headers: { Authorization: `OAuth ${params.accessToken}`, file_offset: "0" },
+        body: params.data,
+      });
+      const uploadJson = (await upload.json()) as { h?: string; error?: { message: string } };
+      if (!uploadJson.h) return { error: uploadJson.error?.message ?? "Upload immagine di esempio fallito" };
+      return { handle: uploadJson.h };
     } catch (err) {
       return { error: err instanceof Error ? err.message : "errore di rete" };
     }
@@ -140,15 +209,7 @@ export class WhatsAppService {
       template: {
         name: params.templateName,
         language: { code: params.language },
-        components:
-          params.variables.length > 0
-            ? [
-                {
-                  type: "body",
-                  parameters: params.variables.map((v) => ({ type: "text", text: v })),
-                },
-              ]
-            : undefined,
+        components: buildSendComponents(params),
       },
     };
 
@@ -243,6 +304,17 @@ export class WhatsAppService {
     }
     return events;
   }
+}
+
+function buildSendComponents(params: SendTemplateMessageParams) {
+  const components: Record<string, unknown>[] = [];
+  if (params.headerImageMediaId) {
+    components.push({ type: "header", parameters: [{ type: "image", image: { id: params.headerImageMediaId } }] });
+  }
+  if (params.variables.length > 0) {
+    components.push({ type: "body", parameters: params.variables.map((v) => ({ type: "text", text: v })) });
+  }
+  return components.length > 0 ? components : undefined;
 }
 
 export type WebhookEvent =

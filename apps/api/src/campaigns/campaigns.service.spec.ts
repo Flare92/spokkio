@@ -27,6 +27,10 @@ function createWhatsAppMock() {
   return { sendTemplateMessage: jest.fn() };
 }
 
+function createMediaMock() {
+  return { ensureMetaMediaId: jest.fn(), assertBelongsToTeam: jest.fn() };
+}
+
 function makeContact(id: string, overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id,
@@ -42,12 +46,14 @@ function makeContact(id: string, overrides: Partial<Record<string, unknown>> = {
 describe("CampaignsService", () => {
   let prisma: PrismaMock;
   let whatsapp: ReturnType<typeof createWhatsAppMock>;
+  let media: ReturnType<typeof createMediaMock>;
   let service: CampaignsService;
 
   beforeEach(() => {
     prisma = createPrismaMock();
     whatsapp = createWhatsAppMock();
-    service = new CampaignsService(prisma as any, whatsapp as any);
+    media = createMediaMock();
+    service = new CampaignsService(prisma as any, whatsapp as any, media as any);
   });
 
   describe("estimateCost", () => {
@@ -112,7 +118,15 @@ describe("CampaignsService", () => {
       variableMapping: [],
       templateId: "tpl-1",
       variantBTemplateId: null,
-      template: { id: "tpl-1", name: "promo_estate", category: "MARKETING", language: "it", bodyText: "Ciao {{1}}" },
+      headerImageId: null,
+      template: {
+        id: "tpl-1",
+        name: "promo_estate",
+        category: "MARKETING",
+        language: "it",
+        bodyText: "Ciao {{1}}",
+        headerImageId: null,
+      },
       variantBTemplate: null,
       segment: { id: "seg-1", name: "Tutti", contacts: [{ contact: makeContact("1") }, { contact: makeContact("2") }] },
     };
@@ -234,6 +248,57 @@ describe("CampaignsService", () => {
       expect(sentVariables[0]).not.toBe(sentVariables[1]);
       expect(prisma.message.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ text: expect.stringContaining("/api/v1/t/") }) }),
+      );
+    });
+
+    it("uploads the header image once and attaches it to every recipient", async () => {
+      const campaignWithImage = {
+        ...baseCampaign,
+        headerImageId: "img-campaign",
+        template: { ...baseCampaign.template, headerImageId: "img-template" },
+      };
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithImage);
+      prisma.segment.findFirst.mockResolvedValue({ id: "seg-1", contacts: campaignWithImage.segment.contacts });
+      prisma.campaign.findUnique.mockResolvedValue(campaignWithImage);
+      prisma.campaign.findUniqueOrThrow.mockResolvedValue(campaignWithImage);
+      prisma.whatsAppConnection.findUnique.mockResolvedValue({ phoneNumberId: "phone-1", accessTokenEncrypted: "token" });
+      prisma.conversation.findFirst.mockResolvedValue(null);
+      prisma.conversation.create.mockImplementation(({ data }: any) => Promise.resolve({ id: `conv-${data.contactId}` }));
+      prisma.message.create.mockImplementation(({ data }: any) => Promise.resolve({ id: `msg-${data.conversationId}` }));
+      media.ensureMetaMediaId.mockResolvedValue("meta-media-123");
+      whatsapp.sendTemplateMessage.mockResolvedValue({ waMessageId: "wamid.ok" });
+
+      const estimate = await service.estimateCost({ teamId: "team-1", segmentId: "seg-1", templateCategory: "MARKETING" });
+      await service.sendCampaign({ teamId: "team-1", campaignId: "camp-1", acceptedCostEstimateTotal: estimate.estimatedTotal });
+
+      // L'immagine della campagna ha la precedenza su quella d'esempio del template.
+      expect(media.ensureMetaMediaId).toHaveBeenCalledTimes(1);
+      expect(media.ensureMetaMediaId).toHaveBeenCalledWith("img-campaign", expect.anything());
+      expect(whatsapp.sendTemplateMessage).toHaveBeenCalledTimes(2);
+      for (const call of whatsapp.sendTemplateMessage.mock.calls) {
+        expect(call[0].headerImageMediaId).toBe("meta-media-123");
+      }
+    });
+
+    it("sends nothing if the header image cannot be uploaded", async () => {
+      const campaignWithImage = {
+        ...baseCampaign,
+        template: { ...baseCampaign.template, headerImageId: "img-template" },
+      };
+      prisma.campaign.findFirst.mockResolvedValue(campaignWithImage);
+      prisma.segment.findFirst.mockResolvedValue({ id: "seg-1", contacts: campaignWithImage.segment.contacts });
+      prisma.campaign.findUnique.mockResolvedValue(campaignWithImage);
+      prisma.whatsAppConnection.findUnique.mockResolvedValue({ phoneNumberId: "phone-1", accessTokenEncrypted: "token" });
+      media.ensureMetaMediaId.mockRejectedValue(new Error("token scaduto"));
+
+      const estimate = await service.estimateCost({ teamId: "team-1", segmentId: "seg-1", templateCategory: "MARKETING" });
+      await expect(
+        service.sendCampaign({ teamId: "team-1", campaignId: "camp-1", acceptedCostEstimateTotal: estimate.estimatedTotal }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(whatsapp.sendTemplateMessage).not.toHaveBeenCalled();
+      expect(prisma.campaign.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "SENDING" }) }),
       );
     });
   });

@@ -88,6 +88,7 @@ model Team {
   appointments        Appointment[]
   cannedResponses     CannedResponse[]
   trackedLinks        TrackedLink[]
+  mediaAssets         MediaAsset[]
 
   @@map("teams")
 }
@@ -204,6 +205,10 @@ model Template {
   // submissionError).
   metaTemplateId  String?
   submissionError String?
+  // Immagine mostrata sopra il testo (header IMAGE di Meta). Quella salvata
+  // qui è l'esempio per l'approvazione; ogni campagna può usarne un'altra.
+  headerImage     MediaAsset?     @relation("TemplateHeaderImage", fields: [headerImageId], references: [id])
+  headerImageId   String?
   createdAt       DateTime        @default(now())
 
   campaigns        Campaign[]
@@ -242,6 +247,10 @@ model Campaign {
   // invio), generata dallo scheduler quando questa viene consegnata.
   recurrence      String    @default("NONE")
   recurrenceEndAt DateTime?
+  // Immagine specifica di questa campagna: se assente si usa quella del
+  // template (solo per template con header immagine).
+  headerImage     MediaAsset? @relation("CampaignHeaderImage", fields: [headerImageId], references: [id])
+  headerImageId   String?
   createdAt     DateTime       @default(now())
 
   messages Message[]
@@ -267,6 +276,30 @@ model Conversation {
 
   @@index([teamId])
   @@map("conversations")
+}
+
+// File immagine caricati dall'utente, salvati nel database locale (così
+// finiscono anche nei backup automatici). L'id restituito da Meta dopo
+// l'upload sul numero vale circa 30 giorni: lo teniamo in cache per non
+// ricaricare la stessa immagine a ogni messaggio.
+model MediaAsset {
+  id                String    @id @default(uuid())
+  team              Team      @relation(fields: [teamId], references: [id])
+  teamId            String
+  filename          String
+  mimeType          String
+  sizeBytes         Int
+  data              Bytes
+  metaMediaId       String?
+  metaPhoneNumberId String?
+  metaUploadedAt    DateTime?
+  createdAt         DateTime  @default(now())
+
+  templates Template[] @relation("TemplateHeaderImage")
+  campaigns Campaign[] @relation("CampaignHeaderImage")
+
+  @@index([teamId])
+  @@map("media_assets")
 }
 
 // Risposte rapide riutilizzabili dagli operatori nell'inbox: uno shortcut

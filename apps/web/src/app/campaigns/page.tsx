@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Nav } from "@/components/nav";
-import { callTool, decodeTeamId } from "@/lib/api";
+import { callTool, decodeTeamId, loadImageDataUrl, uploadImage } from "@/lib/api";
 
 interface SegmentOutput {
   id: string;
@@ -18,6 +18,7 @@ interface TemplateOutput {
   bodyText?: string;
   rejectionReason: string | null;
   metaTemplateId?: string | null;
+  headerImageId?: string | null;
   submissionError?: string | null;
 }
 interface CostEstimateOutput {
@@ -180,11 +181,41 @@ function CampaignBuilder({
   const [recurrenceEndAt, setRecurrenceEndAt] = useState("");
   const [estimate, setEstimate] = useState<CostEstimateOutput | null>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
+  const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
+  const [customImageFile, setCustomImageFile] = useState<File | null>(null);
+  const [customImagePreview, setCustomImagePreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const approvedTemplates = templates.filter((t) => t.status === "APPROVED");
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId);
+  const templateHeaderImageId = selectedTemplate?.headerImageId ?? null;
+  const effectiveImageUrl = customImagePreview ?? templateImageUrl;
+
+  // Carica l'immagine d'esempio del template scelto, e azzera un'eventuale
+  // immagine personalizzata pensata per un template diverso.
+  useEffect(() => {
+    setCustomImageFile(null);
+    setCustomImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setTemplateImageUrl(null);
+    if (!teamId || !templateHeaderImageId) return;
+    let cancelled = false;
+    loadImageDataUrl(teamId, templateHeaderImageId)
+      .then((url) => !cancelled && setTemplateImageUrl(url))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, templateHeaderImageId]);
+
+  function pickCustomImage(file: File | null) {
+    if (customImagePreview) URL.revokeObjectURL(customImagePreview);
+    setCustomImageFile(file);
+    setCustomImagePreview(file ? URL.createObjectURL(file) : null);
+  }
 
   // Quante variabili richiede il corpo del template scelto.
   const variableCount = useMemo(() => {
@@ -270,6 +301,8 @@ function CampaignBuilder({
     setBusy(true);
     setError(null);
     try {
+      const headerImageId =
+        customImageFile && teamId ? (await uploadImage(teamId, customImageFile)).id : undefined;
       const campaign = await callTool<CampaignOutput>("/campaigns", {
         teamId,
         name,
@@ -278,6 +311,7 @@ function CampaignBuilder({
         variableMapping: mapping,
         scheduledAt: scheduleEnabled && scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
         variantBTemplateId: variantBTemplateId || undefined,
+        headerImageId,
         recurrence: scheduleEnabled ? recurrence : "NONE",
         recurrenceEndAt: scheduleEnabled && recurrence !== "NONE" && recurrenceEndAt
           ? new Date(recurrenceEndAt).toISOString()
@@ -424,8 +458,36 @@ function CampaignBuilder({
 
       {selectedTemplate?.bodyText && (
         <div className="rounded bg-gray-50 p-3 text-sm">
-          <span className="mb-1 block text-xs uppercase text-gray-400">Testo del template</span>
+          <span className="mb-1 block text-xs uppercase text-gray-400">Messaggio del template</span>
+          {effectiveImageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={effectiveImageUrl} alt="Immagine del messaggio" className="mb-2 max-h-48 rounded border" />
+          )}
           {selectedTemplate.bodyText}
+        </div>
+      )}
+
+      {templateHeaderImageId && (
+        <div className="rounded border border-dashed p-3 text-sm">
+          <span className="mb-1 block font-medium">Immagine di questa campagna</span>
+          <p className="mb-2 text-xs text-gray-500">
+            {customImageFile
+              ? `Verrà inviata "${customImageFile.name}" al posto dell'immagine del template.`
+              : "Per ora verrà inviata l'immagine del template. Puoi caricarne una diversa solo per questa campagna (JPG o PNG, max 5 MB)."}
+          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="file"
+              accept="image/jpeg,image/png"
+              onChange={(e) => pickCustomImage(e.target.files?.[0] ?? null)}
+              className="text-sm"
+            />
+            {customImageFile && (
+              <button type="button" onClick={() => pickCustomImage(null)} className="text-xs text-gray-500 underline">
+                torna all&apos;immagine del template
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -587,6 +649,10 @@ function CampaignBuilder({
             {preview.map((p) => (
               <li key={p.contactId} className="px-3 py-2 text-sm">
                 <span className="font-mono text-xs text-gray-500">{p.phoneE164}</span>
+                {effectiveImageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={effectiveImageUrl} alt="" className="mt-1 max-h-32 rounded border" />
+                )}
                 <p className="mt-0.5 whitespace-pre-wrap">{p.renderedText}</p>
                 {(p.missingVariables ?? []).length > 0 && (
                   <p className="mt-1 text-xs text-red-600">
@@ -867,21 +933,36 @@ function TemplatesSection({
   const [body, setBody] = useState("");
   const [category, setCategory] = useState("MARKETING");
   const [language, setLanguage] = useState("it");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [submittingId, setSubmittingId] = useState<string | null>(null);
 
+  function pickImage(file: File | null) {
+    if (imagePreview) URL.revokeObjectURL(imagePreview);
+    setImageFile(file);
+    setImagePreview(file ? URL.createObjectURL(file) : null);
+  }
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
+    if (!teamId) return;
     setError(null);
+    setCreating(true);
     try {
-      await callTool("/templates", { teamId, name, category, language, bodyText: body, variables: [] });
+      const headerImageId = imageFile ? (await uploadImage(teamId, imageFile)).id : undefined;
+      await callTool("/templates", { teamId, name, category, language, bodyText: body, variables: [], headerImageId });
       setName("");
       setBody("");
+      pickImage(null);
       setOpen(false);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creazione template fallita");
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -945,8 +1026,35 @@ function TemplatesSection({
             placeholder="Ciao {{1}}, ti aspettiamo il {{2}}!"
             className="h-24 w-full rounded border px-3 py-2 text-sm"
           />
-          <button type="submit" className="rounded bg-brand-dark px-4 py-2 text-sm font-medium text-white">
-            Crea template
+          <div className="rounded border border-dashed p-3 text-sm">
+            <span className="mb-1 block font-medium">Immagine (facoltativa)</span>
+            <p className="mb-2 text-xs text-gray-500">
+              Compare sopra il testo del messaggio. JPG o PNG, massimo 5 MB. Questa serve a Meta come esempio per
+              l&apos;approvazione: quando crei una campagna puoi usare la stessa o caricarne un&apos;altra (es. una
+              foto diversa per ogni offerta) senza dover far riapprovare il template.
+            </p>
+            <input
+              type="file"
+              accept="image/jpeg,image/png"
+              onChange={(e) => pickImage(e.target.files?.[0] ?? null)}
+              className="block text-sm"
+            />
+            {imagePreview && (
+              <div className="mt-2 flex items-start gap-3">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imagePreview} alt="Anteprima" className="max-h-40 rounded border" />
+                <button type="button" onClick={() => pickImage(null)} className="text-xs text-gray-500 underline">
+                  rimuovi
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            type="submit"
+            disabled={creating}
+            className="rounded bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          >
+            {creating ? "Creazione…" : "Crea template"}
           </button>
         </form>
       )}
@@ -957,6 +1065,9 @@ function TemplatesSection({
             <div className="flex items-center justify-between">
               <span>
                 {t.name} <span className="text-xs text-gray-400">· {t.category}</span>
+                {t.headerImageId && (
+                  <span className="ml-2 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700">con immagine</span>
+                )}
               </span>
               <span className="flex items-center gap-2 text-xs">
                 <StatusBadge status={t.status} />

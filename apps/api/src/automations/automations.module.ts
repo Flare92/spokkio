@@ -3,9 +3,10 @@ import { AutomationsService } from "./automations.service";
 import { AutomationsController } from "./automations.controller";
 import { AutomationsSchedulerService } from "./automations-scheduler.service";
 import { WhatsAppModule } from "../whatsapp/whatsapp.module";
+import { MediaModule } from "../media/media.module";
 
 @Module({
-  imports: [WhatsAppModule],
+  imports: [WhatsAppModule, MediaModule],
   providers: [AutomationsService, AutomationsSchedulerService],
   controllers: [AutomationsController],
   exports: [AutomationsService],

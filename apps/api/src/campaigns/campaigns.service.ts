@@ -17,6 +17,7 @@ import type {
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
+import { MediaService } from "../media/media.service";
 import { META_CONVERSATION_RATE_EUR_IT, PLATFORM_MARKUP_EUR } from "./pricing";
 import { countTemplateVariables, renderTemplate } from "./render";
 import { isTrackableUrl, buildTrackingUrl, newTrackingToken } from "./tracking-links";
@@ -30,6 +31,7 @@ export class CampaignsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly whatsapp: WhatsAppService,
+    private readonly media: MediaService,
   ) {}
 
   // Tool: campaigns.estimateCost — must be called, and its result accepted,
@@ -112,6 +114,13 @@ export class CampaignsService {
       );
     }
 
+    if (input.headerImageId) {
+      if (!template.headerImageId) {
+        throw new BadRequestException("Il template scelto non prevede un'immagine: scegline uno creato con immagine");
+      }
+      await this.media.assertBelongsToTeam(input.teamId, input.headerImageId);
+    }
+
     if (input.scheduledAt && new Date(input.scheduledAt).getTime() <= Date.now()) {
       throw new BadRequestException("La data di invio programmato deve essere nel futuro");
     }
@@ -131,6 +140,7 @@ export class CampaignsService {
         variableMapping: input.variableMapping as unknown as object,
         recurrence: input.recurrence,
         recurrenceEndAt: input.recurrenceEndAt ? new Date(input.recurrenceEndAt) : null,
+        headerImageId: input.headerImageId ?? null,
       },
       include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
     });
@@ -155,6 +165,7 @@ export class CampaignsService {
         templateId: original.templateId,
         variantBTemplateId: original.variantBTemplateId,
         variableMapping: original.variableMapping as object,
+        headerImageId: original.headerImageId,
         status: "DRAFT",
       },
       include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
@@ -290,6 +301,24 @@ export class CampaignsService {
     });
     if (!waConnection) throw new BadRequestException("No WhatsApp connection configured for this team");
 
+    // L'immagine viene caricata su Meta una sola volta per campagna (e
+    // riusata per tutti i destinatari), prima di iniziare l'invio: se il
+    // caricamento fallisce non parte nessun messaggio a metà.
+    const headerMediaByTemplate = new Map<string, string>();
+    for (const t of [campaign.template, campaign.variantBTemplate]) {
+      if (!t?.headerImageId || headerMediaByTemplate.has(t.id)) continue;
+      try {
+        headerMediaByTemplate.set(
+          t.id,
+          await this.media.ensureMetaMediaId(campaign.headerImageId ?? t.headerImageId, waConnection),
+        );
+      } catch (err) {
+        throw new BadRequestException(
+          `Impossibile caricare l'immagine su WhatsApp: ${err instanceof Error ? err.message : "errore sconosciuto"}`,
+        );
+      }
+    }
+
     await this.prisma.campaign.update({ where: { id: campaign.id }, data: { status: "SENDING" } });
 
     const mapping = (campaign.variableMapping as unknown as VariableSource[]) ?? [];
@@ -327,6 +356,7 @@ export class CampaignsService {
           language: template.language,
           variables: tracked.values,
           category: template.category,
+          headerImageMediaId: headerMediaByTemplate.get(template.id),
         });
 
         await this.prisma.message.update({
@@ -362,6 +392,7 @@ export class CampaignsService {
     templateId: string;
     variantBTemplateId: string | null;
     variableMapping: unknown;
+    headerImageId: string | null;
     scheduledAt: Date | null;
     recurrence: string;
     recurrenceEndAt: Date | null;
@@ -386,6 +417,7 @@ export class CampaignsService {
         templateId: campaign.templateId,
         variantBTemplateId: campaign.variantBTemplateId,
         variableMapping: campaign.variableMapping as object,
+        headerImageId: campaign.headerImageId,
         status: "SCHEDULED",
         scheduledAt: next,
         recurrence: campaign.recurrence,
@@ -439,6 +471,7 @@ export class CampaignsService {
     createdAt: Date;
     recurrence: string;
     recurrenceEndAt: Date | null;
+    headerImageId: string | null;
     template: { name: string };
     variantBTemplate: { name: string } | null;
     segment: { name: string; contacts: unknown[] };
@@ -456,6 +489,7 @@ export class CampaignsService {
       variantBTemplateName: campaign.variantBTemplate?.name ?? null,
       recurrence: campaign.recurrence as CampaignOutput["recurrence"],
       recurrenceEndAt: campaign.recurrenceEndAt ? campaign.recurrenceEndAt.toISOString() : null,
+      headerImageId: campaign.headerImageId,
     };
   }
 }

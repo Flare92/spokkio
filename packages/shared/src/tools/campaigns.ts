@@ -52,6 +52,9 @@ export const CreateCampaignInput = z.object({
   variantBTemplateId: z.string().uuid().optional(),
   recurrence: z.enum(RecurrenceValues).default("NONE"),
   recurrenceEndAt: z.string().datetime().optional(),
+  // Immagine specifica per questa campagna; se assente si usa quella del
+  // template. Ammessa solo con template che prevedono un'immagine.
+  headerImageId: z.string().uuid().optional(),
 });
 export type CreateCampaignInput = z.infer<typeof CreateCampaignInput>;
 
@@ -68,6 +71,7 @@ export const CampaignOutput = z.object({
   variantBTemplateName: z.string().nullable(),
   recurrence: z.enum(RecurrenceValues),
   recurrenceEndAt: z.string().datetime().nullable(),
+  headerImageId: z.string().uuid().nullable(),
 });
 export type CampaignOutput = z.infer<typeof CampaignOutput>;
 
