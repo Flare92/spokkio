@@ -100,6 +100,15 @@ describe("WebhookIngestService", () => {
       expect(prisma.attributionEvent.create).not.toHaveBeenCalled();
     });
 
+    it("does not downgrade a READ message when a late delivered status arrives", async () => {
+      prisma.message.findFirst.mockResolvedValue({ id: "msg-1", conversationId: "conv-1", status: "READ" });
+
+      await service.handleEvents([statusEvent]);
+
+      expect(prisma.message.update).not.toHaveBeenCalled();
+      expect(prisma.attributionEvent.create).not.toHaveBeenCalled();
+    });
+
     it("records the failure reason on a failed status", async () => {
       prisma.message.findFirst.mockResolvedValue({
         id: "msg-2",

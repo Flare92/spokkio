@@ -9,6 +9,8 @@ const STATUS_MAP: Record<string, "SENT" | "DELIVERED" | "READ" | "FAILED"> = {
   failed: "FAILED",
 };
 
+const STATUS_RANK: Record<string, number> = { QUEUED: 0, SENT: 1, DELIVERED: 2, READ: 3 };
+
 // Turns raw WhatsApp webhook events into: (1) message status + delivery
 // timestamps, (2) one AttributionEvent row per status change so analytics
 // can always drill down to the underlying event, (3) template
@@ -43,6 +45,9 @@ export class WebhookIngestService {
     // duplicate AttributionEvent each time, inflating delivered/read/clicked
     // counts in analytics even though nothing new actually happened.
     if (message.status === status) return;
+    // Meta non garantisce l'ordine: "delivered" può arrivare dopo "read".
+    // Senza questo controllo un messaggio letto tornerebbe "consegnato".
+    if (status !== "FAILED" && STATUS_RANK[status] <= (STATUS_RANK[message.status] ?? 0)) return;
 
     await this.prisma.message.update({
       where: { id: message.id },
