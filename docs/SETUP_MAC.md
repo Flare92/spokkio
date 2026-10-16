@@ -130,6 +130,8 @@ Poi:
 
 In alternativa, se hai già installato l'app con `scripts/build-mac-app.sh` (vedi il changelog di Fase 1.1), apri semplicemente **Spokkio** da Launchpad/Applicazioni invece dei due terminali: fa tutto da sola, incluso quanto descritto qui sotto.
 
+**Icona dell'app.** `scripts/build-mac-app.sh` applica l'icona `assets/spokkio-icon.png` (1024×1024). Per usare il tuo logo, sostituisci quel file con un PNG quadrato 1024×1024 e rilancia lo script.
+
 ## Chiudere Spokkio
 
 Usa il pulsante **Chiudi Spokkio** in alto a destra nell'interfaccia, oppure tasto destro sull'icona di Spokkio nel Dock → **Esci**. API e interfaccia si fermano davvero, così al prossimo doppio click l'app riparte da capo (e si aggiorna). Se Spokkio è già aperto, un doppio click sull'icona riapre solo il browser.

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2BE07A"/>
+      <stop offset="1" stop-color="#0E7A6E"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#053b35" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <!-- Riquadro arrotondato nelle proporzioni delle icone macOS -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+  <!-- Fumetto di chat -->
+  <g filter="url(#shadow)">
+    <path d="M512 248c-154 0-278 104-278 236 0 62 28 119 74 161l-24 103c-3 13 11 23 22 16l112-66c29 9 61 14 94 14 154 0 278-104 278-236S666 248 512 248z" fill="#ffffff"/>
+  </g>
+  <!-- Tre punti "sta scrivendo": il messaggio che parte -->
+  <circle cx="404" cy="486" r="40" fill="#128C7E"/>
+  <circle cx="512" cy="486" r="40" fill="#1DB46C"/>
+  <circle cx="620" cy="486" r="40" fill="#25D366"/>
+</svg>

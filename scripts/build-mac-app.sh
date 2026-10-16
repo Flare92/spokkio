@@ -116,6 +116,24 @@ plist="$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.spokkio.desktop" "$plist" 2>/dev/null || \
   /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string com.spokkio.desktop" "$plist"
 
+# Icona: dal PNG 1024x1024 in assets/ ricava tutte le misure che macOS vuole
+# (.icns) e sostituisce l'icona generica degli applet AppleScript. Per usare
+# un logo diverso basta sostituire assets/spokkio-icon.png e rilanciare.
+icon_png="$ROOT_DIR/assets/spokkio-icon.png"
+if [[ -f "$icon_png" ]] && command -v iconutil >/dev/null 2>&1; then
+  say "Applico l'icona di Spokkio"
+  iconset="$(mktemp -d -t spokkio-icon).iconset"
+  for size in 16 32 128 256 512; do
+    sips -z "$size" "$size" "$icon_png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z "$((size * 2))" "$((size * 2))" "$icon_png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$iconset" -o "$APP_DIR/Contents/Resources/applet.icns"
+  rm -rf "$iconset"
+  # Il Finder e il Dock tengono in cache la vecchia icona.
+  touch "$APP_DIR"
+  killall Dock >/dev/null 2>&1 || true
+fi
+
 say "Fatto."
 cat <<EOF
 
