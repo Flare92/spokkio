@@ -225,6 +225,14 @@ main() {
   log "Spokkio pronto: http://localhost:3000"
   open "http://localhost:3000"
 
+  # Con il Mac in stop Meta non riesce a consegnare letture e risposte al
+  # webhook. Finché Spokkio è aperto il Mac non va in stop da solo (lo
+  # schermo può spegnersi); caffeinate termina insieme a questo script.
+  if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -s -w $$ >/dev/null 2>&1 &
+    log "Stop automatico del Mac sospeso finché Spokkio è aperto."
+  fi
+
   # Resta attivo finché API e interfaccia girano entrambe. Se una delle due si
   # ferma da sola lo segnaliamo e chiudiamo tutto, invece di lasciare un'app
   # aperta a metà. (Niente "wait -n": la bash di macOS è la 3.2.)

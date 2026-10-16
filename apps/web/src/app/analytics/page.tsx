@@ -90,6 +90,8 @@ interface AtRiskCustomer {
   daysSinceActivity: number;
 }
 
+const REFRESH_MS = 30_000;
+
 const RANGES = [
   { days: 7, label: "7 giorni" },
   { days: 30, label: "30 giorni" },
@@ -109,7 +111,12 @@ export default function AnalyticsPage() {
     metric: string;
     events: DrilldownEvent[];
   } | null>(null);
-  const [recipients, setRecipients] = useState<{ campaign: string; rows: CampaignRecipient[] } | null>(null);
+  const [recipients, setRecipients] = useState<{
+    campaignId: string;
+    campaign: string;
+    rows: CampaignRecipient[];
+  } | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -126,6 +133,7 @@ export default function AnalyticsPage() {
       setOverview({ ...o, cost: { ...o.cost, byCategory: o.cost?.byCategory ?? [] } });
       setSeries(s ?? []);
       setCampaigns(c ?? []);
+      setUpdatedAt(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Caricamento analytics fallito");
     }
@@ -141,9 +149,30 @@ export default function AnalyticsPage() {
     }
   }, [teamId, inactivityDays]);
 
+  // Consegne, letture e risposte arrivano da Meta in qualsiasi momento: la
+  // pagina si ricarica da sola, come l'Inbox, invece di restare ferma.
   useEffect(() => {
     load();
+    const interval = setInterval(load, REFRESH_MS);
+    return () => clearInterval(interval);
   }, [load]);
+
+  const openRecipientsId = recipients?.campaignId;
+  useEffect(() => {
+    if (!teamId || !openRecipientsId) return;
+    const interval = setInterval(async () => {
+      try {
+        const rows = await callTool<CampaignRecipient[]>("/analytics/campaign-recipients", {
+          teamId,
+          campaignId: openRecipientsId,
+        });
+        setRecipients((prev) => (prev && prev.campaignId === openRecipientsId ? { ...prev, rows } : prev));
+      } catch {
+        // Il prossimo giro riprova: niente errore a schermo per un aggiornamento in background.
+      }
+    }, REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [teamId, openRecipientsId]);
 
   useEffect(() => {
     loadAtRisk();
@@ -250,7 +279,7 @@ export default function AnalyticsPage() {
         teamId,
         campaignId: row.campaignId,
       });
-      setRecipients({ campaign: row.name, rows });
+      setRecipients({ campaignId: row.campaignId, campaign: row.name, rows });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Elenco destinatari non disponibile");
     }
@@ -274,7 +303,17 @@ export default function AnalyticsPage() {
       <Nav />
       <main className="mx-auto max-w-5xl space-y-8 p-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="text-lg font-semibold">Analytics</h1>
+          <div>
+            <h1 className="text-lg font-semibold">Analytics</h1>
+            {updatedAt && (
+              <p className="text-xs text-gray-500">
+                Aggiornato alle {updatedAt.toLocaleTimeString("it-IT")} · si aggiorna da solo ogni 30 secondi ·{" "}
+                <button onClick={load} className="underline">
+                  aggiorna ora
+                </button>
+              </p>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex gap-1 rounded border bg-white p-0.5">
               {RANGES.map((r) => (
