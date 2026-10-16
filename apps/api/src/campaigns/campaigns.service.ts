@@ -14,6 +14,15 @@ import type {
   ABTestResultsOutput,
   ABVariantStats,
   VariableSource,
+  UpdateCampaignInput,
+  DeleteCampaignsInput,
+  DeleteCampaignsOutput,
+  MoveCampaignsInput,
+  ListCampaignFoldersInput,
+  CreateCampaignFolderInput,
+  RenameCampaignFolderInput,
+  DeleteCampaignFolderInput,
+  CampaignFolderOutput,
 } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
@@ -23,6 +32,11 @@ import { countTemplateVariables, renderTemplate } from "./render";
 import { isTrackableUrl, buildTrackingUrl, newTrackingToken } from "./tracking-links";
 
 const DELIVERED_STATUSES = ["DELIVERED", "READ"];
+const CAMPAIGN_INCLUDE = {
+  template: true,
+  variantBTemplate: true,
+  segment: { include: { contacts: true } },
+} as const;
 
 @Injectable()
 export class CampaignsService {
@@ -87,6 +101,31 @@ export class CampaignsService {
 
   // Tool: campaigns.create
   async createCampaign(input: CreateCampaignInput): Promise<CampaignOutput> {
+    await this.validateCampaignInput(input);
+
+    const campaign = await this.prisma.campaign.create({
+      data: {
+        teamId: input.teamId,
+        name: input.name,
+        segmentId: input.segmentId,
+        templateId: input.templateId,
+        variantBTemplateId: input.variantBTemplateId ?? null,
+        status: input.scheduledAt ? "SCHEDULED" : "DRAFT",
+        scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : null,
+        variableMapping: input.variableMapping as unknown as object,
+        recurrence: input.recurrence,
+        recurrenceEndAt: input.recurrenceEndAt ? new Date(input.recurrenceEndAt) : null,
+        headerImageId: input.headerImageId ?? null,
+      },
+      include: CAMPAIGN_INCLUDE,
+    });
+
+    return this.toOutput(campaign);
+  }
+
+  // Controlli comuni a creazione e modifica: destinatari e template del
+  // team, template approvati, variabili mappate, immagine e date coerenti.
+  private async validateCampaignInput(input: CreateCampaignInput) {
     const [segment, template, variantBTemplate] = await Promise.all([
       this.prisma.segment.findFirst({
         where: { id: input.segmentId, teamId: input.teamId },
@@ -128,9 +167,31 @@ export class CampaignsService {
       throw new BadRequestException("Una campagna ricorrente richiede una data di primo invio");
     }
 
-    const campaign = await this.prisma.campaign.create({
+    return { template };
+  }
+
+  // Tool: campaigns.update — solo bozze e campagne programmate: una volta
+  // partita, una campagna resta com'è (le statistiche si riferiscono a quel
+  // contenuto) e per riproporla si duplica.
+  async updateCampaign(input: UpdateCampaignInput): Promise<CampaignOutput> {
+    const existing = await this.prisma.campaign.findFirst({
+      where: { id: input.campaignId, teamId: input.teamId },
+    });
+    if (!existing) throw new NotFoundException("Campaign not found");
+    if (existing.status !== "DRAFT" && existing.status !== "SCHEDULED") {
+      throw new BadRequestException("Si possono modificare solo bozze e campagne programmate: duplica questa campagna");
+    }
+
+    const { template } = await this.validateCampaignInput(input);
+
+    // Senza un'immagine nuova si tiene quella già scelta, a meno che il
+    // nuovo template non preveda immagini o l'utente l'abbia tolta.
+    const headerImageId =
+      input.headerImageId ?? (input.clearHeaderImage || !template.headerImageId ? null : existing.headerImageId);
+
+    const updated = await this.prisma.campaign.update({
+      where: { id: existing.id },
       data: {
-        teamId: input.teamId,
         name: input.name,
         segmentId: input.segmentId,
         templateId: input.templateId,
@@ -140,12 +201,92 @@ export class CampaignsService {
         variableMapping: input.variableMapping as unknown as object,
         recurrence: input.recurrence,
         recurrenceEndAt: input.recurrenceEndAt ? new Date(input.recurrenceEndAt) : null,
-        headerImageId: input.headerImageId ?? null,
+        headerImageId,
       },
-      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+      include: CAMPAIGN_INCLUDE,
     });
+    return this.toOutput(updated);
+  }
 
-    return this.toOutput(campaign);
+  // Tool: campaigns.delete — singola o in blocco. I messaggi già inviati
+  // restano nell'Inbox (solo scollegati dalla campagna); una campagna in
+  // invio in questo momento non si tocca.
+  async deleteCampaigns(input: DeleteCampaignsInput): Promise<DeleteCampaignsOutput> {
+    const campaigns = await this.prisma.campaign.findMany({
+      where: { id: { in: input.campaignIds }, teamId: input.teamId },
+      select: { id: true, status: true },
+    });
+    const deletable = campaigns.filter((c) => c.status !== "SENDING").map((c) => c.id);
+
+    if (deletable.length > 0) {
+      await this.prisma.$transaction([
+        this.prisma.message.updateMany({ where: { campaignId: { in: deletable } }, data: { campaignId: null } }),
+        this.prisma.campaign.deleteMany({ where: { id: { in: deletable }, teamId: input.teamId } }),
+      ]);
+    }
+    return { deleted: deletable.length, skippedSending: campaigns.length - deletable.length };
+  }
+
+  // Tool: campaigns.move
+  async moveCampaigns(input: MoveCampaignsInput): Promise<{ moved: number }> {
+    if (input.folderId) await this.findFolder(input.teamId, input.folderId);
+    const result = await this.prisma.campaign.updateMany({
+      where: { id: { in: input.campaignIds }, teamId: input.teamId },
+      data: { folderId: input.folderId },
+    });
+    return { moved: result.count };
+  }
+
+  // Tool: campaigns.folders.list
+  async listFolders(input: ListCampaignFoldersInput): Promise<CampaignFolderOutput[]> {
+    const folders = await this.prisma.campaignFolder.findMany({
+      where: { teamId: input.teamId },
+      include: { _count: { select: { campaigns: true } } },
+      orderBy: { name: "asc" },
+    });
+    return folders.map((f) => ({ id: f.id, name: f.name, campaignCount: f._count.campaigns }));
+  }
+
+  // Tool: campaigns.folders.create
+  async createFolder(input: CreateCampaignFolderInput): Promise<CampaignFolderOutput> {
+    await this.assertFolderNameFree(input.teamId, input.name);
+    const folder = await this.prisma.campaignFolder.create({ data: { teamId: input.teamId, name: input.name } });
+    return { id: folder.id, name: folder.name, campaignCount: 0 };
+  }
+
+  // Tool: campaigns.folders.rename
+  async renameFolder(input: RenameCampaignFolderInput): Promise<CampaignFolderOutput> {
+    await this.findFolder(input.teamId, input.folderId);
+    await this.assertFolderNameFree(input.teamId, input.name, input.folderId);
+    const folder = await this.prisma.campaignFolder.update({
+      where: { id: input.folderId },
+      data: { name: input.name },
+      include: { _count: { select: { campaigns: true } } },
+    });
+    return { id: folder.id, name: folder.name, campaignCount: folder._count.campaigns };
+  }
+
+  // Tool: campaigns.folders.delete — le campagne dentro restano, senza cartella.
+  async deleteFolder(input: DeleteCampaignFolderInput): Promise<{ deleted: boolean }> {
+    await this.findFolder(input.teamId, input.folderId);
+    await this.prisma.$transaction([
+      this.prisma.campaign.updateMany({ where: { folderId: input.folderId }, data: { folderId: null } }),
+      this.prisma.campaignFolder.delete({ where: { id: input.folderId } }),
+    ]);
+    return { deleted: true };
+  }
+
+  private async findFolder(teamId: string, folderId: string) {
+    const folder = await this.prisma.campaignFolder.findFirst({ where: { id: folderId, teamId } });
+    if (!folder) throw new NotFoundException("Cartella non trovata");
+    return folder;
+  }
+
+  private async assertFolderNameFree(teamId: string, name: string, exceptId?: string) {
+    const clash = await this.prisma.campaignFolder.findFirst({
+      where: { teamId, name: { equals: name, mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    });
+    if (clash) throw new BadRequestException(`Esiste già una cartella "${clash.name}"`);
   }
 
   // Tool: campaigns.duplicate — riparte da zero come bozza: nome, segmento,
@@ -166,9 +307,10 @@ export class CampaignsService {
         variantBTemplateId: original.variantBTemplateId,
         variableMapping: original.variableMapping as object,
         headerImageId: original.headerImageId,
+        folderId: original.folderId,
         status: "DRAFT",
       },
-      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+      include: CAMPAIGN_INCLUDE,
     });
 
     return this.toOutput(copy);
@@ -219,7 +361,7 @@ export class CampaignsService {
   async listCampaigns(input: ListCampaignsInput): Promise<CampaignOutput[]> {
     const campaigns = await this.prisma.campaign.findMany({
       where: { teamId: input.teamId },
-      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+      include: CAMPAIGN_INCLUDE,
       orderBy: { createdAt: "desc" },
     });
     return campaigns.map((c) => this.toOutput(c));
@@ -238,7 +380,7 @@ export class CampaignsService {
     const updated = await this.prisma.campaign.update({
       where: { id: campaign.id },
       data: { status: "DRAFT", scheduledAt: null, recurrence: "NONE", recurrenceEndAt: null },
-      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+      include: CAMPAIGN_INCLUDE,
     });
     return this.toOutput(updated);
   }
@@ -276,7 +418,7 @@ export class CampaignsService {
 
     const refreshed = await this.prisma.campaign.findUniqueOrThrow({
       where: { id: campaign.id },
-      include: { template: true, variantBTemplate: true, segment: { include: { contacts: true } } },
+      include: CAMPAIGN_INCLUDE,
     });
     return this.toOutput(refreshed);
   }
@@ -393,6 +535,7 @@ export class CampaignsService {
     variantBTemplateId: string | null;
     variableMapping: unknown;
     headerImageId: string | null;
+    folderId: string | null;
     scheduledAt: Date | null;
     recurrence: string;
     recurrenceEndAt: Date | null;
@@ -422,6 +565,7 @@ export class CampaignsService {
         scheduledAt: next,
         recurrence: campaign.recurrence,
         recurrenceEndAt: campaign.recurrenceEndAt,
+        folderId: campaign.folderId,
       },
     });
   }
@@ -472,6 +616,11 @@ export class CampaignsService {
     recurrence: string;
     recurrenceEndAt: Date | null;
     headerImageId: string | null;
+    segmentId: string;
+    templateId: string;
+    variantBTemplateId: string | null;
+    variableMapping: unknown;
+    folderId: string | null;
     template: { name: string };
     variantBTemplate: { name: string } | null;
     segment: { name: string; contacts: unknown[] };
@@ -490,6 +639,13 @@ export class CampaignsService {
       recurrence: campaign.recurrence as CampaignOutput["recurrence"],
       recurrenceEndAt: campaign.recurrenceEndAt ? campaign.recurrenceEndAt.toISOString() : null,
       headerImageId: campaign.headerImageId,
+      segmentId: campaign.segmentId,
+      templateId: campaign.templateId,
+      variantBTemplateId: campaign.variantBTemplateId,
+      variableMapping: Array.isArray(campaign.variableMapping)
+        ? (campaign.variableMapping as VariableSource[])
+        : [],
+      folderId: campaign.folderId,
     };
   }
 }

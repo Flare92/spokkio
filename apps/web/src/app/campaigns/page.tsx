@@ -42,6 +42,17 @@ interface CampaignOutput {
   variantBTemplateName: string | null;
   recurrence: "NONE" | "DAILY" | "WEEKLY" | "MONTHLY";
   recurrenceEndAt: string | null;
+  headerImageId: string | null;
+  segmentId: string;
+  templateId: string;
+  variantBTemplateId: string | null;
+  variableMapping: VariableSource[];
+  folderId: string | null;
+}
+interface CampaignFolder {
+  id: string;
+  name: string;
+  campaignCount: number;
 }
 interface ABVariantStats {
   templateId: string;
@@ -69,6 +80,15 @@ type VariableSource = {
   fallback: string;
 };
 
+// I campi datetime-local / date del browser vogliono l'ora locale, non UTC.
+function toLocalInput(iso: string | null, withTime = true): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return withTime ? `${date}T${pad(d.getHours())}:${pad(d.getMinutes())}` : date;
+}
+
 const CONTACT_FIELD_OPTIONS = [
   { value: "firstName", label: "Nome" },
   { value: "lastName", label: "Cognome" },
@@ -83,13 +103,22 @@ export default function CampaignsPage() {
   const [templates, setTemplates] = useState<TemplateOutput[]>([]);
   const [customFields, setCustomFields] = useState<string[]>([]);
   const [categories, setCategories] = useState<{ name: string; contactCount: number }[]>([]);
+  const [folders, setFolders] = useState<CampaignFolder[]>([]);
   const [showBuilder, setShowBuilder] = useState(false);
+  // Campagna aperta nel costruttore per modificarla (null = nuova campagna).
+  const [editing, setEditing] = useState<CampaignOutput | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  function openEditor(campaign: CampaignOutput | null) {
+    setEditing(campaign);
+    setShowBuilder(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const refresh = useCallback(async () => {
     if (!teamId) return;
     try {
-      const [c, s, t, contacts] = await Promise.all([
+      const [c, s, t, contacts, f] = await Promise.all([
         callTool<CampaignOutput[]>("/campaigns/list", { teamId }),
         callTool<SegmentOutput[]>("/contacts/segments/list", { teamId }),
         callTool<TemplateOutput[]>("/templates/list", { teamId }),
@@ -97,6 +126,7 @@ export default function CampaignsPage() {
           availableCustomFields: string[];
           availableCategories: { name: string; contactCount: number }[];
         }>("/contacts/list", { teamId, limit: 1 }),
+        callTool<CampaignFolder[]>("/campaigns/folders/list", { teamId }).catch(() => []),
       ]);
       // Come nella pagina contatti, gli elenchi vengono normalizzati qui:
       // un'API più vecchia del frontend deve degradare, non far crollare la pagina.
@@ -105,6 +135,7 @@ export default function CampaignsPage() {
       setTemplates(t ?? []);
       setCustomFields(contacts?.availableCustomFields ?? []);
       setCategories(contacts?.availableCategories ?? []);
+      setFolders(f ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Caricamento fallito");
     }
@@ -121,7 +152,7 @@ export default function CampaignsPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold">Campagne</h1>
           <button
-            onClick={() => setShowBuilder((v) => !v)}
+            onClick={() => (showBuilder ? setShowBuilder(false) : openEditor(null))}
             className="rounded bg-brand-dark px-4 py-2 text-sm font-medium text-white"
           >
             {showBuilder ? "Chiudi" : "Nuova campagna"}
@@ -130,6 +161,8 @@ export default function CampaignsPage() {
 
         {showBuilder && (
           <CampaignBuilder
+            key={editing?.id ?? "new"}
+            editing={editing}
             teamId={teamId}
             segments={segments}
             templates={templates}
@@ -137,12 +170,19 @@ export default function CampaignsPage() {
             categories={categories}
             onDone={() => {
               setShowBuilder(false);
+              setEditing(null);
               refresh();
             }}
           />
         )}
 
-        <CampaignList teamId={teamId} campaigns={campaigns} onChanged={refresh} />
+        <CampaignList
+          teamId={teamId}
+          campaigns={campaigns}
+          folders={folders}
+          onChanged={refresh}
+          onEdit={openEditor}
+        />
 
         <TemplatesSection teamId={teamId} templates={templates} onChanged={refresh} />
 
@@ -153,6 +193,7 @@ export default function CampaignsPage() {
 }
 
 function CampaignBuilder({
+  editing,
   teamId,
   segments,
   templates,
@@ -160,6 +201,7 @@ function CampaignBuilder({
   categories,
   onDone,
 }: {
+  editing: CampaignOutput | null;
   teamId: string | null;
   segments: SegmentOutput[];
   templates: TemplateOutput[];
@@ -167,18 +209,26 @@ function CampaignBuilder({
   categories: { name: string; contactCount: number }[];
   onDone: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [audienceMode, setAudienceMode] = useState<"CATEGORY" | "SEGMENT">("CATEGORY");
+  // In modifica si riparte dai valori salvati; i destinatari si mostrano come
+  // segmento perché una categoria è, dietro le quinte, un segmento.
+  const [name, setName] = useState(editing?.name ?? "");
+  const [audienceMode, setAudienceMode] = useState<"CATEGORY" | "SEGMENT">(editing ? "SEGMENT" : "CATEGORY");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [resolvingCategory, setResolvingCategory] = useState(false);
-  const [segmentId, setSegmentId] = useState("");
-  const [templateId, setTemplateId] = useState("");
-  const [mapping, setMapping] = useState<VariableSource[]>([]);
-  const [scheduleEnabled, setScheduleEnabled] = useState(false);
-  const [scheduledAt, setScheduledAt] = useState("");
-  const [variantBTemplateId, setVariantBTemplateId] = useState("");
-  const [recurrence, setRecurrence] = useState<"NONE" | "DAILY" | "WEEKLY" | "MONTHLY">("NONE");
-  const [recurrenceEndAt, setRecurrenceEndAt] = useState("");
+  const [segmentId, setSegmentId] = useState(editing?.segmentId ?? "");
+  const [templateId, setTemplateId] = useState(editing?.templateId ?? "");
+  const [mapping, setMapping] = useState<VariableSource[]>(editing?.variableMapping ?? []);
+  const [scheduleEnabled, setScheduleEnabled] = useState(Boolean(editing?.scheduledAt));
+  const [scheduledAt, setScheduledAt] = useState(toLocalInput(editing?.scheduledAt ?? null));
+  const [variantBTemplateId, setVariantBTemplateId] = useState(editing?.variantBTemplateId ?? "");
+  const [recurrence, setRecurrence] = useState<"NONE" | "DAILY" | "WEEKLY" | "MONTHLY">(
+    editing?.recurrence ?? "NONE",
+  );
+  const [recurrenceEndAt, setRecurrenceEndAt] = useState(toLocalInput(editing?.recurrenceEndAt ?? null, false));
+  // Immagine personalizzata già salvata sulla bozza: resta finché l'utente
+  // non ne carica un'altra, la toglie o cambia template.
+  const [savedImageId, setSavedImageId] = useState<string | null>(editing?.headerImageId ?? null);
+  const [savedImageUrl, setSavedImageUrl] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<CostEstimateOutput | null>(null);
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [templateImageUrl, setTemplateImageUrl] = useState<string | null>(null);
@@ -190,7 +240,18 @@ function CampaignBuilder({
   const approvedTemplates = templates.filter((t) => t.status === "APPROVED");
   const selectedTemplate = approvedTemplates.find((t) => t.id === templateId);
   const templateHeaderImageId = selectedTemplate?.headerImageId ?? null;
-  const effectiveImageUrl = customImagePreview ?? templateImageUrl;
+  const effectiveImageUrl = customImagePreview ?? (savedImageId ? savedImageUrl : null) ?? templateImageUrl;
+
+  useEffect(() => {
+    if (!teamId || !savedImageId) return;
+    let cancelled = false;
+    loadImageDataUrl(teamId, savedImageId)
+      .then((url) => !cancelled && setSavedImageUrl(url))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [teamId, savedImageId]);
 
   // Carica l'immagine d'esempio del template scelto, e azzera un'eventuale
   // immagine personalizzata pensata per un template diverso.
@@ -303,7 +364,8 @@ function CampaignBuilder({
     try {
       const headerImageId =
         customImageFile && teamId ? (await uploadImage(teamId, customImageFile)).id : undefined;
-      const campaign = await callTool<CampaignOutput>("/campaigns", {
+      const campaign = await callTool<CampaignOutput>(editing ? "/campaigns/update" : "/campaigns", {
+        ...(editing ? { campaignId: editing.id, clearHeaderImage: !savedImageId } : {}),
         teamId,
         name,
         segmentId,
@@ -340,6 +402,11 @@ function CampaignBuilder({
 
   return (
     <section className="space-y-5 rounded border bg-white p-5">
+      {editing && (
+        <p className="rounded bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          Stai modificando <strong>{editing.name}</strong>. Salva per aggiornare la bozza, oppure inviala subito.
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <label className="text-sm sm:col-span-3">
           <span className="mb-1 block text-gray-600">Nome campagna</span>
@@ -423,7 +490,10 @@ function CampaignBuilder({
           <span className="mb-1 block text-gray-600">Template (variante A)</span>
           <select
             value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
+            onChange={(e) => {
+              setTemplateId(e.target.value);
+              setSavedImageId(null);
+            }}
             className="w-full rounded border px-3 py-2 text-sm"
           >
             <option value="">Seleziona…</option>
@@ -473,7 +543,9 @@ function CampaignBuilder({
           <p className="mb-2 text-xs text-gray-500">
             {customImageFile
               ? `Verrà inviata "${customImageFile.name}" al posto dell'immagine del template.`
-              : "Per ora verrà inviata l'immagine del template. Puoi caricarne una diversa solo per questa campagna (JPG o PNG, max 5 MB)."}
+              : savedImageId
+                ? "Verrà inviata l'immagine già caricata per questa campagna. Puoi sceglierne un'altra."
+                : "Per ora verrà inviata l'immagine del template. Puoi caricarne una diversa solo per questa campagna (JPG o PNG, max 5 MB)."}
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <input
@@ -482,8 +554,15 @@ function CampaignBuilder({
               onChange={(e) => pickCustomImage(e.target.files?.[0] ?? null)}
               className="text-sm"
             />
-            {customImageFile && (
-              <button type="button" onClick={() => pickCustomImage(null)} className="text-xs text-gray-500 underline">
+            {(customImageFile || savedImageId) && (
+              <button
+                type="button"
+                onClick={() => {
+                  pickCustomImage(null);
+                  setSavedImageId(null);
+                }}
+                className="text-xs text-gray-500 underline"
+              >
                 torna all&apos;immagine del template
               </button>
             )}
@@ -697,7 +776,7 @@ function CampaignBuilder({
           disabled={busy || !name || !segmentId || !templateId}
           className="rounded border px-4 py-2 text-sm disabled:opacity-40"
         >
-          {scheduleEnabled ? "Programma" : "Salva come bozza"}
+          {scheduleEnabled ? "Programma" : editing ? "Salva modifiche" : "Salva come bozza"}
         </button>
         {!scheduleEnabled && (
           <button
@@ -718,38 +797,138 @@ function CampaignBuilder({
 function CampaignList({
   teamId,
   campaigns,
+  folders,
   onChanged,
+  onEdit,
 }: {
   teamId: string | null;
   campaigns: CampaignOutput[];
+  folders: CampaignFolder[];
   onChanged: () => void;
+  onEdit: (campaign: CampaignOutput) => void;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openResultsId, setOpenResultsId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, ABTestResults>>({});
+  // "all" = tutte, "none" = senza cartella, altrimenti l'id della cartella.
+  const [folderFilter, setFolderFilter] = useState<string>("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  async function cancel(campaignId: string) {
+  const activeFolder = folders.find((f) => f.id === folderFilter) ?? null;
+  // Se la cartella aperta viene eliminata, si torna a "Tutte".
+  useEffect(() => {
+    if (folderFilter !== "all" && folderFilter !== "none" && !activeFolder) setFolderFilter("all");
+  }, [folderFilter, activeFolder]);
+
+  const visible = campaigns.filter((c) =>
+    folderFilter === "all" ? true : folderFilter === "none" ? !c.folderId : c.folderId === folderFilter,
+  );
+  const selectedVisible = visible.filter((c) => selected.has(c.id));
+  const allVisibleSelected = visible.length > 0 && selectedVisible.length === visible.length;
+  const folderName = (id: string | null) => folders.find((f) => f.id === id)?.name ?? null;
+
+  function toggle(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const c of visible) {
+        if (allVisibleSelected) next.delete(c.id);
+        else next.add(c.id);
+      }
+      return next;
+    });
+  }
+
+  async function run(action: () => Promise<unknown>, failure: string) {
     setError(null);
     try {
-      await callTool("/campaigns/cancel-scheduled", { teamId, campaignId });
+      await action();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Annullamento fallito");
+      setError(err instanceof Error ? err.message : failure);
     }
   }
 
+  async function cancel(campaignId: string) {
+    await run(() => callTool("/campaigns/cancel-scheduled", { teamId, campaignId }), "Annullamento fallito");
+  }
+
+  // La copia si apre subito nel costruttore: è lì che si modifica e si invia.
   async function duplicate(campaignId: string) {
     setError(null);
     setBusyId(campaignId);
     try {
-      await callTool("/campaigns/duplicate", { teamId, campaignId });
+      const copy = await callTool<CampaignOutput>("/campaigns/duplicate", { teamId, campaignId });
       onChanged();
+      onEdit(copy);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Duplicazione fallita");
     } finally {
       setBusyId(null);
     }
+  }
+
+  async function remove(ids: string[]) {
+    const sent = campaigns.filter((c) => ids.includes(c.id) && c.status === "SENT").length;
+    const message =
+      ids.length === 1
+        ? `Eliminare la campagna "${campaigns.find((c) => c.id === ids[0])?.name}"?`
+        : `Eliminare ${ids.length} campagne?`;
+    const note = sent > 0 ? "\n\nI messaggi già inviati restano nell'Inbox, ma le statistiche della campagna spariscono." : "";
+    if (!confirm(message + note)) return;
+    await run(async () => {
+      const res = await callTool<{ deleted: number; skippedSending: number }>("/campaigns/delete", {
+        teamId,
+        campaignIds: ids,
+      });
+      setSelected((prev) => new Set([...prev].filter((id) => !ids.includes(id))));
+      if (res.skippedSending > 0) {
+        alert(`${res.skippedSending} campagne sono in invio in questo momento e non sono state eliminate.`);
+      }
+    }, "Eliminazione fallita");
+  }
+
+  async function move(ids: string[], folderId: string | null) {
+    await run(async () => {
+      await callTool("/campaigns/move", { teamId, campaignIds: ids, folderId });
+      setSelected(new Set());
+    }, "Spostamento fallito");
+  }
+
+  async function createFolder(thenMove?: string[]) {
+    const name = prompt("Nome della nuova cartella:")?.trim();
+    if (!name) return;
+    await run(async () => {
+      const folder = await callTool<CampaignFolder>("/campaigns/folders/create", { teamId, name });
+      if (thenMove?.length) {
+        await callTool("/campaigns/move", { teamId, campaignIds: thenMove, folderId: folder.id });
+        setSelected(new Set());
+      }
+      setFolderFilter(folder.id);
+    }, "Creazione cartella fallita");
+  }
+
+  async function renameFolder(folder: CampaignFolder) {
+    const name = prompt("Nuovo nome della cartella:", folder.name)?.trim();
+    if (!name || name === folder.name) return;
+    await run(() => callTool("/campaigns/folders/rename", { teamId, folderId: folder.id, name }), "Rinomina fallita");
+  }
+
+  async function deleteFolder(folder: CampaignFolder) {
+    if (!confirm(`Eliminare la cartella "${folder.name}"? Le campagne dentro non vengono eliminate.`)) return;
+    await run(async () => {
+      await callTool("/campaigns/folders/delete", { teamId, folderId: folder.id });
+      setFolderFilter("all");
+    }, "Eliminazione cartella fallita");
   }
 
   async function toggleResults(campaignId: string) {
@@ -769,12 +948,85 @@ function CampaignList({
     }
   }
 
+  const tabClass = (active: boolean) =>
+    `rounded px-3 py-1 text-sm ${active ? "bg-brand-dark text-white" : "border bg-white text-gray-600"}`;
+  const selectedIds = selectedVisible.map((c) => c.id);
+
   return (
-    <section>
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <button onClick={() => setFolderFilter("all")} className={tabClass(folderFilter === "all")}>
+          Tutte ({campaigns.length})
+        </button>
+        {folders.map((f) => (
+          <button key={f.id} onClick={() => setFolderFilter(f.id)} className={tabClass(folderFilter === f.id)}>
+            📁 {f.name} ({f.campaignCount})
+          </button>
+        ))}
+        {folders.length > 0 && (
+          <button onClick={() => setFolderFilter("none")} className={tabClass(folderFilter === "none")}>
+            Senza cartella ({campaigns.filter((c) => !c.folderId).length})
+          </button>
+        )}
+        <button onClick={() => createFolder()} className="text-sm text-brand-dark underline">
+          + nuova cartella
+        </button>
+        {activeFolder && (
+          <span className="ml-auto space-x-3 text-xs">
+            <button onClick={() => renameFolder(activeFolder)} className="text-gray-500 underline">
+              rinomina cartella
+            </button>
+            <button onClick={() => deleteFolder(activeFolder)} className="text-red-600 underline">
+              elimina cartella
+            </button>
+          </span>
+        )}
+      </div>
+
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded border border-brand-dark/30 bg-blue-50 px-3 py-2 text-sm">
+          <span className="font-medium">{selectedIds.length} selezionate</span>
+          <select
+            value=""
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__new") createFolder(selectedIds);
+              else if (v === "__none") move(selectedIds, null);
+              else if (v) move(selectedIds, v);
+            }}
+            className="rounded border bg-white px-2 py-1 text-sm"
+          >
+            <option value="">Sposta in cartella…</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+            <option value="__new">+ Nuova cartella…</option>
+            <option value="__none">Togli dalla cartella</option>
+          </select>
+          <button onClick={() => remove(selectedIds)} className="rounded bg-red-600 px-3 py-1 text-white">
+            Elimina selezionate
+          </button>
+          <button onClick={() => setSelected(new Set())} className="text-xs text-gray-500 underline">
+            deseleziona
+          </button>
+        </div>
+      )}
+
       <div className="overflow-x-auto rounded border bg-white">
         <table className="w-full text-left text-sm">
           <thead className="bg-gray-50 text-xs uppercase text-gray-500">
             <tr>
+              <th className="w-8 px-3 py-2">
+                <input
+                  type="checkbox"
+                  aria-label="Seleziona tutte"
+                  checked={allVisibleSelected}
+                  onChange={toggleAllVisible}
+                  disabled={visible.length === 0}
+                />
+              </th>
               <th className="px-3 py-2">Campagna</th>
               <th className="px-3 py-2">Segmento</th>
               <th className="px-3 py-2">Template</th>
@@ -785,80 +1037,114 @@ function CampaignList({
             </tr>
           </thead>
           <tbody>
-            {campaigns.map((c) => (
-              <Fragment key={c.id}>
-                <tr className="border-t">
-                  <td className="px-3 py-2 font-medium">{c.name}</td>
-                  <td className="px-3 py-2 text-gray-600">{c.segmentName}</td>
-                  <td className="px-3 py-2 text-gray-600">
-                    {c.templateName}
-                    {c.variantBTemplateName && (
-                      <span className="ml-1 text-xs text-gray-400">(A/B: {c.variantBTemplateName})</span>
-                    )}
-                    {c.recurrence !== "NONE" && (
-                      <span className="ml-1 rounded bg-purple-50 px-1.5 py-0.5 text-xs text-purple-700">
-                        {c.recurrence === "DAILY" ? "giornaliera" : c.recurrence === "WEEKLY" ? "settimanale" : "mensile"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">{c.recipientCount}</td>
-                  <td className="px-3 py-2">
-                    <StatusBadge status={c.status} />
-                  </td>
-                  <td className="px-3 py-2 text-xs text-gray-500">
-                    {c.sentAt
-                      ? `Inviata ${new Date(c.sentAt).toLocaleString("it-IT")}`
-                      : c.scheduledAt
-                        ? `Programmata ${new Date(c.scheduledAt).toLocaleString("it-IT")}`
-                        : `Creata ${new Date(c.createdAt).toLocaleDateString("it-IT")}`}
-                  </td>
-                  <td className="px-3 py-2 text-right space-x-2 whitespace-nowrap">
-                    {c.status === "SCHEDULED" && (
-                      <button onClick={() => cancel(c.id)} className="text-xs text-gray-500 underline">
-                        annulla
-                      </button>
-                    )}
-                    {c.variantBTemplateName && c.status === "SENT" && (
-                      <button
-                        onClick={() => toggleResults(c.id)}
-                        className="text-xs text-brand-dark underline"
-                      >
-                        {openResultsId === c.id ? "nascondi A/B" : "risultati A/B"}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => duplicate(c.id)}
-                      disabled={busyId === c.id}
-                      className="text-xs text-gray-500 underline disabled:opacity-40"
-                    >
-                      duplica
-                    </button>
-                  </td>
-                </tr>
-                {openResultsId === c.id && (
-                  <tr className="border-t bg-gray-50">
-                    <td colSpan={7} className="px-3 py-3">
-                      {results[c.id] ? (
-                        <ABResultsTable data={results[c.id]} />
+            {visible.map((c) => {
+              const editable = c.status === "DRAFT" || c.status === "SCHEDULED";
+              return (
+                <Fragment key={c.id}>
+                  <tr className={`border-t ${selected.has(c.id) ? "bg-blue-50/50" : ""}`}>
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleziona ${c.name}`}
+                        checked={selected.has(c.id)}
+                        onChange={() => toggle(c.id)}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      {editable ? (
+                        <button
+                          onClick={() => onEdit(c)}
+                          className="text-left font-medium underline decoration-dotted underline-offset-2 hover:text-brand-dark"
+                        >
+                          {c.name}
+                        </button>
                       ) : (
-                        <p className="text-xs text-gray-400">Caricamento risultati…</p>
+                        <span className="font-medium">{c.name}</span>
+                      )}
+                      {folderFilter === "all" && c.folderId && (
+                        <div className="text-xs text-gray-400">📁 {folderName(c.folderId)}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{c.segmentName}</td>
+                    <td className="px-3 py-2 text-gray-600">
+                      {c.templateName}
+                      {c.variantBTemplateName && (
+                        <span className="ml-1 text-xs text-gray-400">(A/B: {c.variantBTemplateName})</span>
+                      )}
+                      {c.recurrence !== "NONE" && (
+                        <span className="ml-1 rounded bg-purple-50 px-1.5 py-0.5 text-xs text-purple-700">
+                          {c.recurrence === "DAILY" ? "giornaliera" : c.recurrence === "WEEKLY" ? "settimanale" : "mensile"}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{c.recipientCount}</td>
+                    <td className="px-3 py-2">
+                      <StatusBadge status={c.status} />
+                    </td>
+                    <td className="px-3 py-2 text-xs text-gray-500">
+                      {c.sentAt
+                        ? `Inviata ${new Date(c.sentAt).toLocaleString("it-IT")}`
+                        : c.scheduledAt
+                          ? `Programmata ${new Date(c.scheduledAt).toLocaleString("it-IT")}`
+                          : `Creata ${new Date(c.createdAt).toLocaleDateString("it-IT")}`}
+                    </td>
+                    <td className="space-x-2 whitespace-nowrap px-3 py-2 text-right">
+                      {editable && (
+                        <button onClick={() => onEdit(c)} className="text-xs font-medium text-brand-dark underline">
+                          {c.status === "DRAFT" ? "modifica e invia" : "modifica"}
+                        </button>
+                      )}
+                      {c.status === "SCHEDULED" && (
+                        <button onClick={() => cancel(c.id)} className="text-xs text-gray-500 underline">
+                          annulla
+                        </button>
+                      )}
+                      {c.variantBTemplateName && c.status === "SENT" && (
+                        <button onClick={() => toggleResults(c.id)} className="text-xs text-brand-dark underline">
+                          {openResultsId === c.id ? "nascondi A/B" : "risultati A/B"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => duplicate(c.id)}
+                        disabled={busyId === c.id}
+                        className="text-xs text-gray-500 underline disabled:opacity-40"
+                      >
+                        duplica
+                      </button>
+                      {c.status !== "SENDING" && (
+                        <button onClick={() => remove([c.id])} className="text-xs text-red-600 underline">
+                          elimina
+                        </button>
                       )}
                     </td>
                   </tr>
-                )}
-              </Fragment>
-            ))}
-            {campaigns.length === 0 && (
+                  {openResultsId === c.id && (
+                    <tr className="border-t bg-gray-50">
+                      <td colSpan={8} className="px-3 py-3">
+                        {results[c.id] ? (
+                          <ABResultsTable data={results[c.id]} />
+                        ) : (
+                          <p className="text-xs text-gray-400">Caricamento risultati…</p>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+            {visible.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-sm text-gray-400">
-                  Nessuna campagna. Creane una con il pulsante qui sopra.
+                <td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-400">
+                  {campaigns.length === 0
+                    ? "Nessuna campagna. Creane una con il pulsante qui sopra."
+                    : "Nessuna campagna in questa cartella. Selezionane alcune e usa \"Sposta in cartella\"."}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
     </section>
   );
 }

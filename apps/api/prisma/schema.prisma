@@ -80,6 +80,7 @@ model Team {
   segments            Segment[]
   templates           Template[]
   campaigns           Campaign[]
+  campaignFolders     CampaignFolder[]
   conversations       Conversation[]
   automations         Automation[]
   waConnection        WhatsAppConnection?
@@ -251,12 +252,28 @@ model Campaign {
   // template (solo per template con header immagine).
   headerImage     MediaAsset? @relation("CampaignHeaderImage", fields: [headerImageId], references: [id])
   headerImageId   String?
+  // Cartella in cui l'utente ha archiviato la campagna (null = nessuna).
+  folder          CampaignFolder? @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  folderId        String?
   createdAt     DateTime       @default(now())
 
   messages Message[]
 
   @@index([teamId])
   @@map("campaigns")
+}
+
+model CampaignFolder {
+  id        String   @id @default(uuid())
+  team      Team     @relation(fields: [teamId], references: [id])
+  teamId    String
+  name      String
+  createdAt DateTime @default(now())
+
+  campaigns Campaign[]
+
+  @@unique([teamId, name])
+  @@map("campaign_folders")
 }
 
 model Conversation {

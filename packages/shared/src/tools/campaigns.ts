@@ -72,8 +72,74 @@ export const CampaignOutput = z.object({
   recurrence: z.enum(RecurrenceValues),
   recurrenceEndAt: z.string().datetime().nullable(),
   headerImageId: z.string().uuid().nullable(),
+  // Campi che servono a riaprire una bozza nel costruttore per modificarla.
+  segmentId: z.string().uuid(),
+  templateId: z.string().uuid(),
+  variantBTemplateId: z.string().uuid().nullable(),
+  variableMapping: z.array(VariableSource),
+  folderId: z.string().uuid().nullable(),
 });
 export type CampaignOutput = z.infer<typeof CampaignOutput>;
+
+// Modifica di una campagna non ancora partita (bozza o programmata): stessi
+// campi della creazione. Una campagna inviata non si modifica, si duplica.
+export const UpdateCampaignInput = CreateCampaignInput.extend({
+  campaignId: z.string().uuid(),
+  // Senza un'immagine nuova si tiene quella già salvata sulla campagna;
+  // true la rimuove e torna all'immagine del template.
+  clearHeaderImage: z.boolean().default(false),
+});
+export type UpdateCampaignInput = z.infer<typeof UpdateCampaignInput>;
+
+export const DeleteCampaignsInput = z.object({
+  teamId: z.string().uuid(),
+  campaignIds: z.array(z.string().uuid()).min(1),
+});
+export type DeleteCampaignsInput = z.infer<typeof DeleteCampaignsInput>;
+
+export const DeleteCampaignsOutput = z.object({
+  deleted: z.number().int(),
+  // Le campagne in invio in questo momento non si possono eliminare.
+  skippedSending: z.number().int(),
+});
+export type DeleteCampaignsOutput = z.infer<typeof DeleteCampaignsOutput>;
+
+export const CampaignFolderOutput = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  campaignCount: z.number().int(),
+});
+export type CampaignFolderOutput = z.infer<typeof CampaignFolderOutput>;
+
+export const ListCampaignFoldersInput = z.object({ teamId: z.string().uuid() });
+export type ListCampaignFoldersInput = z.infer<typeof ListCampaignFoldersInput>;
+
+export const CreateCampaignFolderInput = z.object({
+  teamId: z.string().uuid(),
+  name: z.string().trim().min(1).max(60),
+});
+export type CreateCampaignFolderInput = z.infer<typeof CreateCampaignFolderInput>;
+
+export const RenameCampaignFolderInput = z.object({
+  teamId: z.string().uuid(),
+  folderId: z.string().uuid(),
+  name: z.string().trim().min(1).max(60),
+});
+export type RenameCampaignFolderInput = z.infer<typeof RenameCampaignFolderInput>;
+
+// Eliminare una cartella non elimina le campagne: tornano "senza cartella".
+export const DeleteCampaignFolderInput = z.object({
+  teamId: z.string().uuid(),
+  folderId: z.string().uuid(),
+});
+export type DeleteCampaignFolderInput = z.infer<typeof DeleteCampaignFolderInput>;
+
+export const MoveCampaignsInput = z.object({
+  teamId: z.string().uuid(),
+  campaignIds: z.array(z.string().uuid()).min(1),
+  folderId: z.string().uuid().nullable(), // null = togli dalla cartella
+});
+export type MoveCampaignsInput = z.infer<typeof MoveCampaignsInput>;
 
 export const DuplicateCampaignInput = z.object({ teamId: z.string().uuid(), campaignId: z.string().uuid() });
 export type DuplicateCampaignInput = z.infer<typeof DuplicateCampaignInput>;
@@ -148,4 +214,11 @@ export const CAMPAIGNS_TOOLS = {
   "campaigns.cancelScheduled": { input: CancelScheduledCampaignInput, output: CampaignOutput },
   "campaigns.duplicate": { input: DuplicateCampaignInput, output: CampaignOutput },
   "campaigns.abTestResults": { input: ABTestResultsInput, output: ABTestResultsOutput },
+  "campaigns.update": { input: UpdateCampaignInput, output: CampaignOutput },
+  "campaigns.delete": { input: DeleteCampaignsInput, output: DeleteCampaignsOutput },
+  "campaigns.move": { input: MoveCampaignsInput, output: z.object({ moved: z.number().int() }) },
+  "campaigns.folders.list": { input: ListCampaignFoldersInput, output: z.array(CampaignFolderOutput) },
+  "campaigns.folders.create": { input: CreateCampaignFolderInput, output: CampaignFolderOutput },
+  "campaigns.folders.rename": { input: RenameCampaignFolderInput, output: CampaignFolderOutput },
+  "campaigns.folders.delete": { input: DeleteCampaignFolderInput, output: z.object({ deleted: z.boolean() }) },
 } as const;

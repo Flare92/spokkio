@@ -8,6 +8,13 @@ import {
   CancelScheduledCampaignInput,
   DuplicateCampaignInput,
   ABTestResultsInput,
+  UpdateCampaignInput,
+  DeleteCampaignsInput,
+  MoveCampaignsInput,
+  ListCampaignFoldersInput,
+  CreateCampaignFolderInput,
+  RenameCampaignFolderInput,
+  DeleteCampaignFolderInput,
 } from "@spokkio/shared";
 import { CampaignsService } from "./campaigns.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -67,5 +74,47 @@ export class CampaignsController {
   @Post("ab-test-results")
   abTestResults(@Body(new ZodValidationPipe(ABTestResultsInput)) body: ABTestResultsInput) {
     return this.campaigns.abTestResults(body);
+  }
+
+  // tool: campaigns.update
+  @Post("update")
+  update(@Body(new ZodValidationPipe(UpdateCampaignInput)) body: UpdateCampaignInput) {
+    return this.campaigns.updateCampaign(body);
+  }
+
+  // tool: campaigns.delete
+  @Post("delete")
+  delete(@Body(new ZodValidationPipe(DeleteCampaignsInput)) body: DeleteCampaignsInput) {
+    return this.campaigns.deleteCampaigns(body);
+  }
+
+  // tool: campaigns.move
+  @Post("move")
+  move(@Body(new ZodValidationPipe(MoveCampaignsInput)) body: MoveCampaignsInput) {
+    return this.campaigns.moveCampaigns(body);
+  }
+
+  // tool: campaigns.folders.list
+  @Post("folders/list")
+  listFolders(@Body(new ZodValidationPipe(ListCampaignFoldersInput)) body: ListCampaignFoldersInput) {
+    return this.campaigns.listFolders(body);
+  }
+
+  // tool: campaigns.folders.create
+  @Post("folders/create")
+  createFolder(@Body(new ZodValidationPipe(CreateCampaignFolderInput)) body: CreateCampaignFolderInput) {
+    return this.campaigns.createFolder(body);
+  }
+
+  // tool: campaigns.folders.rename
+  @Post("folders/rename")
+  renameFolder(@Body(new ZodValidationPipe(RenameCampaignFolderInput)) body: RenameCampaignFolderInput) {
+    return this.campaigns.renameFolder(body);
+  }
+
+  // tool: campaigns.folders.delete
+  @Post("folders/delete")
+  deleteFolder(@Body(new ZodValidationPipe(DeleteCampaignFolderInput)) body: DeleteCampaignFolderInput) {
+    return this.campaigns.deleteFolder(body);
   }
 }
