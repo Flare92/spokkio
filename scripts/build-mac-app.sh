@@ -151,6 +151,11 @@ lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchS
 touch "$APP_DIR"
 killall Dock >/dev/null 2>&1 || true
 
+# Anche con il pacchetto corretto la cache delle icone di macOS può restare
+# sull'icona generica: l'icona personalizzata la scavalca. Va applicata dopo
+# la firma (come fa il Finder con "Ottieni informazioni").
+[[ -f "$icon_png" ]] && { "$ROOT_DIR/scripts/spokkio-set-icon.sh" "$icon_png" || true; }
+
 say "Fatto."
 cat <<EOF
 
