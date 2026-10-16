@@ -15,6 +15,7 @@ source "$ROOT_DIR/scripts/spokkio-common.sh"
 
 API_PID=""
 WEB_PID=""
+NGROK_PID=""
 CLEANED_UP=0
 
 cleanup() {
@@ -26,6 +27,7 @@ cleanup() {
   sleep 1
   kill_tree "$API_PID" KILL
   kill_tree "$WEB_PID" KILL
+  kill_tree "$NGROK_PID" TERM
   # Il PID file appartiene a questo processo solo se contiene ancora il suo PID.
   [[ "$(cat "$PID_FILE" 2>/dev/null)" == "$$" ]] && rm -f "$PID_FILE"
   log "Spokkio arrestato."
@@ -152,6 +154,35 @@ build() {
   fi
 }
 
+# Avvia ngrok sul dominio di PUBLIC_BASE_URL, così Meta può mandare a Spokkio
+# consegne, letture e risposte. Se ngrok manca o fallisce Spokkio parte lo
+# stesso: si perdono solo gli eventi del webhook.
+start_ngrok() {
+  local env_file="$ROOT_DIR/apps/api/.env" url domain
+  url="$(grep -E '^[[:space:]]*PUBLIC_BASE_URL[[:space:]]*=' "$env_file" 2>/dev/null | tail -1 | sed -E 's/^[^=]*=//; s/^[[:space:]"]*//; s/[[:space:]"\/]*$//')"
+  domain="${url#https://}"
+  [[ "$domain" == *ngrok* ]] || return 0
+  if ! command -v ngrok >/dev/null 2>&1; then
+    log "ngrok non installato: il webhook non riceverà eventi (brew install ngrok)."
+    return 0
+  fi
+  if curl -s --max-time 2 http://127.0.0.1:4040/api/tunnels | grep -q "$domain"; then
+    log "ngrok già attivo su $domain."
+    return 0
+  fi
+  log "Avvio ngrok su $domain"
+  ngrok http --url="$domain" 3001 --log=stdout >>"$LOG_FILE" 2>&1 &
+  NGROK_PID=$!
+  local _
+  for _ in $(seq 1 10); do
+    curl -s --max-time 2 http://127.0.0.1:4040/api/tunnels | grep -q "$domain" && return 0
+    kill -0 "$NGROK_PID" 2>/dev/null || break
+    sleep 1
+  done
+  log "ATTENZIONE: ngrok non è partito, il webhook non riceverà eventi (dettagli sopra)."
+  alert "ngrok non è partito: Spokkio funziona, ma letture e risposte non arriveranno. Dettagli in ~/Library/Logs/Spokkio/spokkio.log"
+}
+
 wait_for() {
   local url="$1"
   for _ in $(seq 1 60); do
@@ -182,6 +213,8 @@ main() {
   node dist/main.js >>"$LOG_FILE" 2>&1 &
   API_PID=$!
   wait_for "http://localhost:3001/api/v1/auth/login"
+
+  start_ngrok
 
   log "Avvio interfaccia su :3000"
   cd "$ROOT_DIR/apps/web" || exit 1
