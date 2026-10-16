@@ -1,10 +1,12 @@
-import { BadRequestException, Body, Controller, Get, Post, Query, Res } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Logger, Post, Query, Res } from "@nestjs/common";
 import type { Response } from "express";
 import { WhatsAppService } from "./whatsapp.service";
 import { WebhookIngestService } from "./webhook-ingest.service";
 
 @Controller("webhooks/whatsapp")
 export class WebhookController {
+  private readonly logger = new Logger("Webhook");
+
   constructor(
     private readonly whatsapp: WhatsAppService,
     private readonly ingest: WebhookIngestService,
@@ -29,6 +31,10 @@ export class WebhookController {
   @Post()
   async receive(@Body() payload: unknown, @Res() res: Response) {
     const events = this.whatsapp.parseStatusWebhook(payload);
+    // Una riga per ogni chiamata di Meta nel log di Spokkio: è il modo più
+    // rapido per capire se gli eventi arrivano davvero.
+    const summary = events.map((e) => (e.type === "status" ? `status:${e.status}` : e.type)).join(", ");
+    this.logger.log(`Ricevuto da Meta: ${summary || "nessun evento riconosciuto"}`);
     await this.ingest.handleEvents(events);
     // Meta requires a fast 200 ack regardless of downstream processing outcome.
     res.status(200).send("EVENT_RECEIVED");

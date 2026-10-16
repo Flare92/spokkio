@@ -35,7 +35,10 @@ export class WebhookIngestService {
 
   private async handleStatus(event: Extract<WebhookEvent, { type: "status" }>) {
     const message = await this.prisma.message.findFirst({ where: { waMessageId: event.waMessageId } });
-    if (!message) return;
+    if (!message) {
+      this.logger.warn(`Stato "${event.status}" per un messaggio sconosciuto (${event.waMessageId})`);
+      return;
+    }
 
     const status = STATUS_MAP[event.status];
     if (!status) return;
