@@ -20,6 +20,12 @@ export const ConversationSummary = z.object({
   lastMessagePreview: z.string(),
   lastMessageAt: z.string().datetime(),
   unread: z.boolean(),
+  // Il cliente ha scritto almeno una volta in questa conversazione.
+  customerReplied: z.boolean(),
+  // L'ultimo messaggio è del cliente: aspetta una nostra risposta.
+  awaitingReply: z.boolean(),
+  // Stato dell'ultimo messaggio inviato da noi (null se non ne abbiamo inviati).
+  lastOutboundStatus: z.enum(MessageDeliveryStatusValues).nullable(),
   assignedOperatorId: z.string().uuid().nullable(),
   assignedOperatorEmail: z.string().nullable(),
   labels: z.array(z.string()),

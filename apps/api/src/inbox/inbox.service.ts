@@ -54,7 +54,36 @@ export class InboxService {
       orderBy: { createdAt: "desc" },
     });
 
-    return conversations.map((c) => this.toSummary(c));
+    const ids = conversations.map((c) => c.id);
+    const [lastOutbound, inboundCounts] = await Promise.all([
+      this.prisma.message.findMany({
+        where: { conversationId: { in: ids }, direction: "OUTBOUND" },
+        orderBy: { createdAt: "desc" },
+        distinct: ["conversationId"],
+        select: { conversationId: true, status: true },
+      }),
+      this.prisma.message.groupBy({
+        by: ["conversationId"],
+        where: { conversationId: { in: ids }, direction: "INBOUND" },
+        _count: { _all: true },
+      }),
+    ]);
+    const outboundStatus = new Map(lastOutbound.map((m) => [m.conversationId, m.status]));
+    const replied = new Set(inboundCounts.map((g) => g.conversationId));
+
+    // In cima le chat in cui il cliente ha risposto e aspetta noi, poi tutte
+    // le altre; in entrambi i gruppi la più recente prima.
+    return conversations
+      .map((c) =>
+        this.toSummary(c, {
+          customerReplied: replied.has(c.id),
+          lastOutboundStatus: outboundStatus.get(c.id) ?? null,
+        }),
+      )
+      .sort(
+        (a, b) =>
+          Number(b.awaitingReply) - Number(a.awaitingReply) || b.lastMessageAt.localeCompare(a.lastMessageAt),
+      );
   }
 
   // Tool: inbox.getConversation — full message history for the thread view.
@@ -64,6 +93,12 @@ export class InboxService {
       include: { contact: true, messages: { orderBy: { createdAt: "asc" } } },
     });
     if (!conversation) throw new NotFoundException("Conversation not found");
+
+    // Aprire la chat equivale a leggerla: toglie il pallino "non letto".
+    await this.prisma.message.updateMany({
+      where: { conversationId: conversation.id, direction: "INBOUND", status: { not: "READ" } },
+      data: { status: "READ" },
+    });
 
     return {
       id: conversation.id,
@@ -223,8 +258,16 @@ export class InboxService {
     contact: { firstName: string | null; lastName: string | null; phoneE164: string };
     assignedOperator: { email: string } | null;
     messages: { text: string; direction: string; status: string; createdAt: Date }[];
-  }): ConversationSummary {
+  }, extra?: { customerReplied: boolean; lastOutboundStatus: string | null }): ConversationSummary {
     const last = c.messages[0];
+    // Senza i dati extra (assegnazione, etichette) si ricava il possibile
+    // dall'ultimo messaggio: la lista completa viene ricaricata subito dopo.
+    const customerReplied = extra?.customerReplied ?? last?.direction === "INBOUND";
+    const lastOutboundStatus = extra
+      ? extra.lastOutboundStatus
+      : last?.direction === "OUTBOUND"
+        ? last.status
+        : null;
     return {
       id: c.id,
       contactId: c.contactId,
@@ -233,6 +276,9 @@ export class InboxService {
       lastMessagePreview: last?.text ?? "",
       lastMessageAt: (last?.createdAt ?? c.createdAt).toISOString(),
       unread: last?.direction === "INBOUND" && last.status !== "READ",
+      customerReplied,
+      awaitingReply: last?.direction === "INBOUND",
+      lastOutboundStatus: lastOutboundStatus as ConversationSummary["lastOutboundStatus"],
       assignedOperatorId: c.assignedOperatorId,
       assignedOperatorEmail: c.assignedOperator?.email ?? null,
       labels: c.labels,

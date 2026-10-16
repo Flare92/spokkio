@@ -14,9 +14,39 @@ interface ConversationSummary {
   lastMessagePreview: string;
   lastMessageAt: string;
   unread: boolean;
+  customerReplied: boolean;
+  awaitingReply: boolean;
+  lastOutboundStatus: "QUEUED" | "SENT" | "DELIVERED" | "READ" | "FAILED" | null;
   assignedOperatorId: string | null;
   assignedOperatorEmail: string | null;
   labels: string[];
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  QUEUED: "in coda",
+  SENT: "✓ inviato",
+  DELIVERED: "✓✓ ricevuto",
+  READ: "✓✓ visualizzato",
+  FAILED: "⚠ non consegnato",
+};
+
+type ReadFilter = "all" | "replied" | "read" | "notRead";
+
+// Stato del nostro ultimo messaggio, come le spunte di WhatsApp.
+function OutboundTicks({ status }: { status: ConversationSummary["lastOutboundStatus"] }) {
+  if (!status) return null;
+  const map = {
+    QUEUED: { icon: "🕓", label: "In coda", className: "text-gray-400" },
+    SENT: { icon: "✓", label: "Inviato", className: "text-gray-400" },
+    DELIVERED: { icon: "✓✓", label: "Non visualizzato", className: "text-gray-500" },
+    READ: { icon: "✓✓", label: "Visualizzato", className: "text-sky-600 font-medium" },
+    FAILED: { icon: "⚠", label: "Non consegnato", className: "text-red-600" },
+  }[status];
+  return (
+    <span className={`text-[11px] ${map.className}`} title={map.label}>
+      <span className="font-semibold tracking-tighter">{map.icon}</span> {map.label}
+    </span>
+  );
 }
 interface MessageOutput {
   id: string;
@@ -57,6 +87,7 @@ export default function InboxPage() {
   const [search, setSearch] = useState("");
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [labelFilter, setLabelFilter] = useState("");
+  const [readFilter, setReadFilter] = useState<ReadFilter>("all");
   const [showCannedManager, setShowCannedManager] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,6 +187,20 @@ export default function InboxPage() {
   }
 
   const allLabels = Array.from(new Set(conversations.flatMap((c) => c.labels))).sort();
+  const matchesReadFilter = (c: ConversationSummary, f: ReadFilter) =>
+    f === "all" ||
+    (f === "replied" && c.customerReplied) ||
+    (f === "read" && !c.customerReplied && c.lastOutboundStatus === "READ") ||
+    (f === "notRead" &&
+      !c.customerReplied &&
+      (c.lastOutboundStatus === "SENT" || c.lastOutboundStatus === "DELIVERED"));
+  const visibleConversations = conversations.filter((c) => matchesReadFilter(c, readFilter));
+  const READ_FILTERS: { key: ReadFilter; label: string }[] = [
+    { key: "all", label: "Tutte" },
+    { key: "replied", label: "Hanno risposto" },
+    { key: "read", label: "Visualizzato, nessuna risposta" },
+    { key: "notRead", label: "Non visualizzato" },
+  ];
 
   return (
     <div>
@@ -174,6 +219,19 @@ export default function InboxPage() {
               <input type="checkbox" checked={onlyUnassigned} onChange={(e) => setOnlyUnassigned(e.target.checked)} />
               solo non assegnate
             </label>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {READ_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setReadFilter(f.key)}
+                className={`rounded-full border px-2 py-0.5 text-xs ${
+                  readFilter === f.key ? "border-brand-dark bg-green-50 text-brand-dark" : "text-gray-600"
+                }`}
+              >
+                {f.label} ({conversations.filter((c) => matchesReadFilter(c, f.key)).length})
+              </button>
+            ))}
           </div>
           {allLabels.length > 0 && (
             <div className="flex flex-wrap gap-1">
@@ -199,20 +257,32 @@ export default function InboxPage() {
             </div>
           )}
           <ul className="space-y-1">
-            {conversations.map((c) => (
+            {visibleConversations.map((c) => (
               <li key={c.id}>
                 <button
                   onClick={() => setSelected(c.id)}
-                  className={`w-full rounded border p-2 text-left text-sm ${
-                    selected === c.id ? "border-brand-dark bg-green-50" : "bg-white"
-                  }`}
+                  className={`w-full rounded p-2 text-left text-sm ${
+                    c.awaitingReply
+                      ? "border-2 border-green-500 bg-green-50/60 shadow-sm"
+                      : c.lastOutboundStatus === "READ"
+                        ? "border border-sky-200 bg-white"
+                        : "border bg-white"
+                  } ${selected === c.id ? "ring-2 ring-brand-dark ring-offset-1" : ""}`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{c.contactName ?? c.contactPhone}</span>
-                    {c.unread && <span className="h-2 w-2 rounded-full bg-brand-dark" />}
+                    <span className={c.unread ? "font-semibold" : "font-medium"}>{c.contactName ?? c.contactPhone}</span>
+                    <span className="flex items-center gap-1.5">
+                      {c.awaitingReply && (
+                        <span className="rounded-full bg-green-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                          ha risposto
+                        </span>
+                      )}
+                      {c.unread && <span className="h-2 w-2 rounded-full bg-brand-dark" title="Non ancora letta" />}
+                    </span>
                   </div>
-                  <div className="truncate text-gray-500">{c.lastMessagePreview}</div>
+                  <div className={`truncate ${c.unread ? "text-gray-800" : "text-gray-500"}`}>{c.lastMessagePreview}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {!c.awaitingReply && <OutboundTicks status={c.lastOutboundStatus} />}
                     {c.assignedOperatorEmail && (
                       <span className="rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] text-blue-700">
                         {c.assignedOperatorEmail}
@@ -227,7 +297,9 @@ export default function InboxPage() {
                 </button>
               </li>
             ))}
-            {conversations.length === 0 && <p className="text-sm text-gray-400">Nessuna conversazione trovata.</p>}
+            {visibleConversations.length === 0 && (
+              <p className="text-sm text-gray-400">Nessuna conversazione trovata.</p>
+            )}
           </ul>
         </div>
         <div className="sm:col-span-2 space-y-3">
@@ -269,7 +341,7 @@ export default function InboxPage() {
                       <p className="whitespace-pre-wrap">{m.text}</p>
                       <p className={`mt-1 text-[10px] ${m.direction === "OUTBOUND" ? "text-white/70" : "text-gray-400"}`}>
                         {new Date(m.createdAt).toLocaleString("it-IT")}
-                        {m.direction === "OUTBOUND" ? ` · ${m.status.toLowerCase()}` : ""}
+                        {m.direction === "OUTBOUND" ? ` · ${STATUS_LABEL[m.status] ?? m.status.toLowerCase()}` : ""}
                       </p>
                     </div>
                   </div>

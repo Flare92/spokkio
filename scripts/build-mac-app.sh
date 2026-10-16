@@ -129,10 +129,27 @@ if [[ -f "$icon_png" ]] && command -v iconutil >/dev/null 2>&1; then
   done
   iconutil -c icns "$iconset" -o "$APP_DIR/Contents/Resources/applet.icns"
   rm -rf "$iconset"
-  # Il Finder e il Dock tengono in cache la vecchia icona.
-  touch "$APP_DIR"
-  killall Dock >/dev/null 2>&1 || true
+  # Da macOS 11 osacompile mette anche un'icona compilata in Assets.car,
+  # indicata da CFBundleIconName, che ha la precedenza su applet.icns: senza
+  # toglierla il Dock continua a mostrare l'icona generica degli script.
+  rm -f "$APP_DIR/Contents/Resources/Assets.car"
+  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$plist" >/dev/null 2>&1 || true
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile applet" "$plist" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string applet" "$plist"
+else
+  echo "ATTENZIONE: icona non applicata (manca $icon_png oppure iconutil)."
 fi
+
+# Le modifiche a Info.plist e alle risorse invalidano la firma che osacompile
+# applica all'app: va rifirmata (firma locale), altrimenti macOS può
+# rifiutarsi di aprirla.
+codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
+
+# Il Finder e il Dock tengono in cache la vecchia icona.
+lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+[[ -x "$lsregister" ]] && "$lsregister" -f "$APP_DIR" >/dev/null 2>&1 || true
+touch "$APP_DIR"
+killall Dock >/dev/null 2>&1 || true
 
 say "Fatto."
 cat <<EOF
