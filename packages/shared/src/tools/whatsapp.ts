@@ -24,6 +24,10 @@ export const WhatsAppConnectionStatusOutput = z.object({
   // Esito di una chiamata di verifica verso Meta con le credenziali salvate.
   tokenValid: z.boolean().nullable(),
   tokenError: z.string().nullable(),
+  // Senza l'iscrizione del WABA all'app (subscribed_apps) Meta non invia al
+  // webhook gli eventi del numero reale: Spokkio la verifica e la attiva.
+  webhookSubscribed: z.boolean().nullable(),
+  webhookError: z.string().nullable(),
 });
 export type WhatsAppConnectionStatusOutput = z.infer<typeof WhatsAppConnectionStatusOutput>;
 

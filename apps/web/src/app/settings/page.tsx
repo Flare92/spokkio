@@ -12,6 +12,8 @@ interface ConnectionStatus {
   connectedAt: string | null;
   tokenValid: boolean | null;
   tokenError: string | null;
+  webhookSubscribed: boolean | null;
+  webhookError: string | null;
 }
 
 export default function SettingsPage() {
@@ -100,6 +102,22 @@ export default function SettingsPage() {
                     I token temporanei di Meta scadono dopo 24 ore: rigenerane uno dalla pagina API Setup e
                     reinseriscilo qui sotto.
                   </p>
+                </div>
+              )}
+
+              {status.webhookSubscribed === true && (
+                <p className="flex items-center gap-2 rounded bg-green-50 px-3 py-2 text-sm text-green-800">
+                  <span aria-hidden>✓</span> Account WhatsApp iscritto all&apos;app: Meta invia consegne, letture e
+                  risposte al webhook.
+                </p>
+              )}
+              {status.webhookSubscribed === false && (
+                <div className="rounded bg-red-50 px-3 py-2 text-sm text-red-800">
+                  <p className="flex items-center gap-2 font-medium">
+                    <span aria-hidden>⚠</span> Account WhatsApp non iscritto all&apos;app: letture e risposte non
+                    arriveranno
+                  </p>
+                  {status.webhookError && <p className="mt-1 text-xs">{status.webhookError}</p>}
                 </div>
               )}
 

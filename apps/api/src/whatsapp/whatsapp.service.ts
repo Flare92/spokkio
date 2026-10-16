@@ -161,6 +161,27 @@ export class WhatsAppService {
     return this.queue.enqueue(params.phoneNumberId, () => this.sendTextOnce(params));
   }
 
+  // Iscrive il WABA all'app del token: senza questo passo
+  // Meta non manda al webhook stati e risposte del numero reale.
+  async ensureWebhookSubscription(params: {
+    wabaId: string;
+    accessToken: string;
+  }): Promise<{ subscribed: boolean | null; error?: string }> {
+    const url = `${GRAPH_BASE_URL}/${params.wabaId}/subscribed_apps`;
+    const headers = { Authorization: `Bearer ${params.accessToken}` };
+    try {
+      // POST è idempotente: rifarlo su un WABA già iscritto risponde success.
+      const created = (await (await fetch(url, { method: "POST", headers })).json()) as {
+        success?: boolean;
+        error?: { message: string };
+      };
+      if (created.success) return { subscribed: true };
+      return { subscribed: false, error: created.error?.message ?? "Iscrizione al webhook non riuscita" };
+    } catch (err) {
+      return { subscribed: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   private async sendTextOnce(params: {
     phoneNumberId: string;
     accessToken: string;

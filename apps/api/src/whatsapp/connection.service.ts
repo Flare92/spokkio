@@ -51,6 +51,8 @@ export class WhatsAppConnectionService {
         connectedAt: null,
         tokenValid: null,
         tokenError: null,
+        webhookSubscribed: null,
+        webhookError: null,
       };
     }
 
@@ -58,6 +60,13 @@ export class WhatsAppConnectionService {
       phoneNumberId: connection.phoneNumberId,
       accessToken: connection.accessTokenEncrypted,
     });
+
+    const subscription = check.valid
+      ? await this.whatsapp.ensureWebhookSubscription({
+          wabaId: connection.wabaId,
+          accessToken: connection.accessTokenEncrypted,
+        })
+      : { subscribed: null, error: null };
 
     return {
       connected: true,
@@ -67,6 +76,8 @@ export class WhatsAppConnectionService {
       connectedAt: connection.connectedAt.toISOString(),
       tokenValid: check.valid,
       tokenError: check.error ?? null,
+      webhookSubscribed: subscription.subscribed,
+      webhookError: subscription.error ?? null,
     };
   }
 }
