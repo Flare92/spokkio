@@ -100,10 +100,34 @@ export const CampaignPerformanceOutput = z.array(
     failed: z.number().int(),
     deliveryRate: z.number(),
     readRate: z.number(),
+    // Destinatari che hanno risposto entro REPLY_WINDOW_DAYS dalla campagna.
+    replied: z.number().int(),
+    replyRate: z.number(),
     costTotal: z.number(),
   }),
 );
 export type CampaignPerformanceOutput = z.infer<typeof CampaignPerformanceOutput>;
+
+// Esito per singolo destinatario: consegna, lettura, fallimento e risposta.
+export const CampaignRecipientsInput = z.object({
+  teamId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+});
+export type CampaignRecipientsInput = z.infer<typeof CampaignRecipientsInput>;
+
+export const CampaignRecipientOutput = z.object({
+  contactId: z.string().uuid(),
+  name: z.string().nullable(),
+  phoneE164: z.string(),
+  status: z.enum(["QUEUED", "SENT", "DELIVERED", "READ", "FAILED"]),
+  sentAt: z.string().datetime(),
+  deliveredAt: z.string().datetime().nullable(),
+  readAt: z.string().datetime().nullable(),
+  failedReason: z.string().nullable(),
+  repliedAt: z.string().datetime().nullable(),
+  replyText: z.string().nullable(),
+});
+export type CampaignRecipientOutput = z.infer<typeof CampaignRecipientOutput>;
 
 // "A rischio" = un contatto che ha già avuto almeno una conversazione reale
 // (non un contatto appena importato e mai contattato) ma che non dà segnali
@@ -133,5 +157,9 @@ export const ANALYTICS_TOOLS = {
   "analytics.overview": { input: AnalyticsRangeInput, output: AnalyticsOverviewOutput },
   "analytics.timeSeries": { input: AnalyticsRangeInput, output: AnalyticsTimeSeriesOutput },
   "analytics.campaignPerformance": { input: AnalyticsRangeInput, output: CampaignPerformanceOutput },
+  "analytics.campaignRecipients": {
+    input: CampaignRecipientsInput,
+    output: z.array(CampaignRecipientOutput),
+  },
   "analytics.atRiskCustomers": { input: AtRiskCustomersInput, output: z.array(AtRiskCustomerOutput) },
 } as const;

@@ -10,6 +10,8 @@ import type {
   CampaignPerformanceOutput,
   AtRiskCustomersInput,
   AtRiskCustomerOutput,
+  CampaignRecipientsInput,
+  CampaignRecipientOutput,
   MessageCategory,
 } from "@spokkio/shared";
 import { MessageCategoryValues } from "@spokkio/shared";
@@ -21,6 +23,8 @@ import {
 } from "../campaigns/pricing";
 
 const DELIVERED_STATUSES = ["DELIVERED", "READ"];
+// Una risposta conta per una campagna se arriva entro questi giorni dall'invio.
+const REPLY_WINDOW_DAYS = 7;
 
 @Injectable()
 export class AnalyticsService {
@@ -191,7 +195,9 @@ export class AnalyticsService {
       include: {
         template: { select: { category: true } },
         segment: { include: { contacts: true } },
-        messages: { select: { id: true, status: true } },
+        messages: {
+          select: { id: true, status: true, createdAt: true, conversation: { select: { contactId: true } } },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -202,12 +208,18 @@ export class AnalyticsService {
       _count: { _all: true },
     });
     const clicksByMessage = new Map(clickCounts.map((c) => [c.messageId, c._count._all]));
+    const replies = await this.findReplies(
+      campaigns.flatMap((c) =>
+        c.messages.map((m) => ({ id: m.id, contactId: m.conversation.contactId, createdAt: m.createdAt })),
+      ),
+    );
 
     return campaigns.map((campaign) => {
       const sent = campaign.messages.filter((m) => m.status !== "QUEUED").length;
       const delivered = campaign.messages.filter((m) => DELIVERED_STATUSES.includes(m.status)).length;
       const read = campaign.messages.filter((m) => m.status === "READ").length;
       const failed = campaign.messages.filter((m) => m.status === "FAILED").length;
+      const replied = campaign.messages.filter((m) => replies.has(m.id)).length;
       const clicked = campaign.messages.reduce((acc, m) => acc + (clicksByMessage.get(m.id) ?? 0), 0);
 
       const billable = campaign.messages.filter((m) => m.status !== "QUEUED" && m.status !== "FAILED").length;
@@ -227,9 +239,76 @@ export class AnalyticsService {
         failed,
         deliveryRate: rate(delivered, sent),
         readRate: rate(read, delivered),
+        replied,
+        replyRate: rate(replied, delivered),
         costTotal: Number((billable * ratePerConversation).toFixed(2)),
       };
     });
+  }
+
+  // Tool: analytics.campaignRecipients
+  async campaignRecipients(input: CampaignRecipientsInput): Promise<CampaignRecipientOutput[]> {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: input.campaignId, teamId: input.teamId },
+    });
+    if (!campaign) throw new NotFoundException("Campaign not found");
+
+    const messages = await this.prisma.message.findMany({
+      where: { campaignId: campaign.id, direction: "OUTBOUND" },
+      include: { conversation: { include: { contact: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    const replies = await this.findReplies(
+      messages.map((m) => ({ id: m.id, contactId: m.conversation.contactId, createdAt: m.createdAt })),
+    );
+
+    return messages.map((m) => {
+      const contact = m.conversation.contact;
+      const reply = replies.get(m.id);
+      const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
+      return {
+        contactId: contact.id,
+        name: name || null,
+        phoneE164: contact.phoneE164,
+        status: m.status,
+        sentAt: m.createdAt.toISOString(),
+        deliveredAt: m.deliveredAt ? m.deliveredAt.toISOString() : null,
+        readAt: m.readAt ? m.readAt.toISOString() : null,
+        failedReason: m.failedReason,
+        repliedAt: reply ? reply.createdAt.toISOString() : null,
+        replyText: reply ? reply.text : null,
+      };
+    });
+  }
+
+  // Per ogni messaggio inviato, la prima risposta dello stesso contatto
+  // arrivata entro REPLY_WINDOW_DAYS. Una query sola per tutti i contatti.
+  private async findReplies(sent: { id: string; contactId: string; createdAt: Date }[]) {
+    const result = new Map<string, { createdAt: Date; text: string }>();
+    if (sent.length === 0) return result;
+
+    const earliest = new Date(Math.min(...sent.map((m) => m.createdAt.getTime())));
+    const inbound = await this.prisma.message.findMany({
+      where: {
+        direction: "INBOUND",
+        createdAt: { gt: earliest },
+        conversation: { contactId: { in: [...new Set(sent.map((m) => m.contactId))] } },
+      },
+      select: { createdAt: true, text: true, conversation: { select: { contactId: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+
+    const windowMs = REPLY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    for (const message of sent) {
+      const reply = inbound.find(
+        (r) =>
+          r.conversation.contactId === message.contactId &&
+          r.createdAt > message.createdAt &&
+          r.createdAt.getTime() - message.createdAt.getTime() <= windowMs,
+      );
+      if (reply) result.set(message.id, { createdAt: reply.createdAt, text: reply.text });
+    }
+    return result;
   }
 
   // Tool: analytics.atRiskCustomers — un contatto entra in questa lista solo

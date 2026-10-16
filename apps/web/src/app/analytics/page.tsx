@@ -48,8 +48,31 @@ interface CampaignPerformanceRow {
   failed: number;
   deliveryRate: number;
   readRate: number;
+  replied: number;
+  replyRate: number;
   costTotal: number;
 }
+
+interface CampaignRecipient {
+  contactId: string;
+  name: string | null;
+  phoneE164: string;
+  status: "QUEUED" | "SENT" | "DELIVERED" | "READ" | "FAILED";
+  sentAt: string;
+  deliveredAt: string | null;
+  readAt: string | null;
+  failedReason: string | null;
+  repliedAt: string | null;
+  replyText: string | null;
+}
+
+const RECIPIENT_STATUS: Record<CampaignRecipient["status"], { label: string; className: string }> = {
+  QUEUED: { label: "In coda", className: "bg-gray-100 text-gray-600" },
+  SENT: { label: "Inviato", className: "bg-gray-100 text-gray-700" },
+  DELIVERED: { label: "Ricevuto", className: "bg-blue-50 text-blue-800" },
+  READ: { label: "Letto", className: "bg-green-50 text-green-800" },
+  FAILED: { label: "Non consegnato", className: "bg-red-50 text-red-800" },
+};
 
 interface DrilldownEvent {
   contactId: string;
@@ -86,6 +109,7 @@ export default function AnalyticsPage() {
     metric: string;
     events: DrilldownEvent[];
   } | null>(null);
+  const [recipients, setRecipients] = useState<{ campaign: string; rows: CampaignRecipient[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -218,6 +242,18 @@ export default function AnalyticsPage() {
     });
 
     doc.save(`spokkio-report-${overview.periodDays}gg.pdf`);
+  }
+
+  async function openRecipients(row: CampaignPerformanceRow) {
+    try {
+      const rows = await callTool<CampaignRecipient[]>("/analytics/campaign-recipients", {
+        teamId,
+        campaignId: row.campaignId,
+      });
+      setRecipients({ campaign: row.name, rows });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Elenco destinatari non disponibile");
+    }
   }
 
   async function openDrilldown(row: CampaignPerformanceRow, metric: "delivered" | "read" | "clicked" | "failed") {
@@ -382,8 +418,8 @@ export default function AnalyticsPage() {
         <section>
           <h2 className="mb-1 text-sm font-semibold">Performance per campagna</h2>
           <p className="mb-3 text-xs text-gray-500">
-            I numeri di consegna, lettura, click e fallimenti sono cliccabili: aprono l'elenco degli eventi
-            singoli che li compongono.
+            Clicca sul nome di una campagna per vedere, persona per persona, chi l&apos;ha ricevuta, letta e chi
+            ha risposto. Anche i numeri sono cliccabili e aprono gli eventi che li compongono.
           </p>
           <div className="overflow-x-auto rounded border bg-white">
             <table className="w-full text-left text-sm">
@@ -394,6 +430,7 @@ export default function AnalyticsPage() {
                   <th className="px-3 py-2 text-right">Inviati</th>
                   <th className="px-3 py-2 text-right">Consegnati</th>
                   <th className="px-3 py-2 text-right">Letti</th>
+                  <th className="px-3 py-2 text-right">Risposte</th>
                   <th className="px-3 py-2 text-right">Click</th>
                   <th className="px-3 py-2 text-right">Falliti</th>
                   <th className="px-3 py-2 text-right">Costo</th>
@@ -403,7 +440,12 @@ export default function AnalyticsPage() {
                 {campaigns.map((row) => (
                   <tr key={row.campaignId} className="border-t">
                     <td className="px-3 py-2">
-                      <div className="font-medium">{row.name}</div>
+                      <button
+                        onClick={() => openRecipients(row)}
+                        className="font-medium underline decoration-dotted underline-offset-2 hover:text-brand-dark"
+                      >
+                        {row.name}
+                      </button>
                       <div className="text-xs text-gray-500">
                         {row.sentAt ? new Date(row.sentAt).toLocaleDateString("it-IT") : row.status}
                       </div>
@@ -423,6 +465,12 @@ export default function AnalyticsPage() {
                       />
                     </td>
                     <td className="px-3 py-2 text-right">
+                      <DrilldownCell
+                        value={`${row.replied} (${row.replyRate}%)`}
+                        onClick={() => openRecipients(row)}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right">
                       <DrilldownCell value={String(row.clicked)} onClick={() => openDrilldown(row, "clicked")} />
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -433,7 +481,7 @@ export default function AnalyticsPage() {
                 ))}
                 {campaigns.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-400">
+                    <td colSpan={9} className="px-3 py-6 text-center text-sm text-gray-400">
                       Nessuna campagna nel periodo selezionato.
                     </td>
                   </tr>
@@ -442,6 +490,8 @@ export default function AnalyticsPage() {
             </table>
           </div>
         </section>
+
+        {recipients && <RecipientsPanel {...recipients} onClose={() => setRecipients(null)} />}
 
         <section>
           <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -528,6 +578,119 @@ export default function AnalyticsPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
       </main>
     </div>
+  );
+}
+
+function RecipientsPanel({
+  campaign,
+  rows,
+  onClose,
+}: {
+  campaign: string;
+  rows: CampaignRecipient[];
+  onClose: () => void;
+}) {
+  const [filter, setFilter] = useState<"all" | "read" | "unread" | "replied" | "failed">("all");
+  const fmt = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" }) : "—";
+  const counts = {
+    all: rows.length,
+    read: rows.filter((r) => r.status === "READ").length,
+    unread: rows.filter((r) => r.status === "SENT" || r.status === "DELIVERED").length,
+    replied: rows.filter((r) => r.repliedAt).length,
+    failed: rows.filter((r) => r.status === "FAILED").length,
+  };
+  const visible = rows.filter((r) => {
+    if (filter === "read") return r.status === "READ";
+    if (filter === "unread") return r.status === "SENT" || r.status === "DELIVERED";
+    if (filter === "replied") return r.repliedAt !== null;
+    if (filter === "failed") return r.status === "FAILED";
+    return true;
+  });
+  const FILTERS: { key: typeof filter; label: string }[] = [
+    { key: "all", label: "Tutti" },
+    { key: "read", label: "Letto" },
+    { key: "unread", label: "Non ancora letto" },
+    { key: "replied", label: "Hanno risposto" },
+    { key: "failed", label: "Non consegnato" },
+  ];
+
+  return (
+    <section className="rounded border bg-white p-4">
+      <div className="mb-2 flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Destinatari — {campaign}</h2>
+        <button onClick={onClose} className="text-xs text-gray-500 underline">
+          chiudi
+        </button>
+      </div>
+      <p className="mb-3 text-xs text-gray-500">
+        &quot;Letto&quot; compare solo se il cliente ha le spunte blu attive: chi le ha disattivate resta
+        &quot;Ricevuto&quot; anche se l&apos;ha letto. Le risposte contano se arrivano entro 7 giorni dall&apos;invio.
+      </p>
+      <div className="mb-3 flex flex-wrap gap-1">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            onClick={() => setFilter(f.key)}
+            className={`rounded px-2.5 py-1 text-xs ${
+              filter === f.key ? "bg-brand-dark text-white" : "border text-gray-600"
+            }`}
+          >
+            {f.label} ({counts[f.key]})
+          </button>
+        ))}
+      </div>
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500">
+            <tr>
+              <th className="px-3 py-2">Cliente</th>
+              <th className="px-3 py-2">Stato</th>
+              <th className="px-3 py-2">Ricevuto</th>
+              <th className="px-3 py-2">Letto</th>
+              <th className="px-3 py-2">Risposta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((r) => (
+              <tr key={r.contactId + r.sentAt} className="border-t align-top">
+                <td className="px-3 py-2">
+                  <div className="font-medium">{r.name ?? r.phoneE164}</div>
+                  {r.name && <div className="text-xs text-gray-500">{r.phoneE164}</div>}
+                </td>
+                <td className="px-3 py-2">
+                  <span className={`rounded px-2 py-0.5 text-xs ${RECIPIENT_STATUS[r.status].className}`}>
+                    {RECIPIENT_STATUS[r.status].label}
+                  </span>
+                  {r.failedReason && <div className="mt-1 text-xs text-red-700">{r.failedReason}</div>}
+                </td>
+                <td className="px-3 py-2 text-xs">{fmt(r.deliveredAt)}</td>
+                <td className="px-3 py-2 text-xs">{fmt(r.readAt)}</td>
+                <td className="px-3 py-2 text-xs">
+                  {r.repliedAt ? (
+                    <>
+                      <div className="text-gray-500">{fmt(r.repliedAt)}</div>
+                      <div className="mt-0.5 max-w-xs truncate" title={r.replyText ?? ""}>
+                        {r.replyText}
+                      </div>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+              </tr>
+            ))}
+            {visible.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                  Nessun destinatario in questo filtro.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
