@@ -1099,6 +1099,14 @@ function CampaignList({
                           annulla
                         </button>
                       )}
+                      {(c.sentAt || c.status === "SENDING") && (
+                        <a
+                          href={`/analytics?campagna=${c.id}`}
+                          className="text-xs font-medium text-brand-dark underline"
+                        >
+                          statistiche
+                        </a>
+                      )}
                       {c.variantBTemplateName && c.status === "SENT" && (
                         <button onClick={() => toggleResults(c.id)} className="text-xs text-brand-dark underline">
                           {openResultsId === c.id ? "nascondi A/B" : "risultati A/B"}

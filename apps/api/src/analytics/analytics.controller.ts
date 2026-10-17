@@ -5,6 +5,7 @@ import {
   AnalyticsRangeInput,
   AtRiskCustomersInput,
   CampaignRecipientsInput,
+  CampaignReportInput,
 } from "@spokkio/shared";
 import { AnalyticsService } from "./analytics.service";
 import { ZodValidationPipe } from "../common/zod-validation.pipe";
@@ -26,6 +27,12 @@ export class AnalyticsController {
   @Post("campaign-event-drilldown")
   drilldown(@Body(new ZodValidationPipe(CampaignEventDrilldownInput)) body: CampaignEventDrilldownInput) {
     return this.analytics.campaignEventDrilldown(body);
+  }
+
+  // tool: analytics.campaignReport
+  @Post("campaign-report")
+  campaignReport(@Body(new ZodValidationPipe(CampaignReportInput)) body: CampaignReportInput) {
+    return this.analytics.campaignReport(body);
   }
 
   // tool: analytics.campaignRecipients

@@ -92,6 +92,47 @@ interface AtRiskCustomer {
 
 const REFRESH_MS = 30_000;
 
+interface CampaignOption {
+  id: string;
+  name: string;
+  status: string;
+  sentAt: string | null;
+}
+
+interface CampaignReport {
+  campaignId: string;
+  name: string;
+  status: string;
+  templateName: string;
+  segmentName: string;
+  sentAt: string | null;
+  recipients: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  clicked: number;
+  failed: number;
+  pending: number;
+  deliveryRate: number;
+  readRate: number;
+  replyRate: number;
+  clickRate: number;
+  costTotal: number;
+  costPerReply: number | null;
+  medianMinutesToRead: number | null;
+  medianMinutesToReply: number | null;
+  timeline: { hour: number; delivered: number; read: number; replied: number }[];
+  failureReasons: { reason: string; count: number }[];
+}
+
+function formatDuration(minutes: number | null): string {
+  if (minutes === null) return "—";
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 48 * 60) return `${Math.round((minutes / 60) * 10) / 10} ore`;
+  return `${Math.round(minutes / 1440)} giorni`;
+}
+
 const RANGES = [
   { days: 7, label: "7 giorni" },
   { days: 30, label: "30 giorni" },
@@ -117,6 +158,30 @@ export default function AnalyticsPage() {
     rows: CampaignRecipient[];
   } | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  // Campagna scelta in alto: null = analytics di tutti i messaggi.
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
+  const [campaignOptions, setCampaignOptions] = useState<CampaignOption[]>([]);
+
+  // Dalla pagina Campagne si arriva qui con ?campagna=<id>.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("campagna");
+    if (fromUrl) setSelectedCampaignId(fromUrl);
+  }, []);
+
+  useEffect(() => {
+    if (!teamId) return;
+    callTool<CampaignOption[]>("/campaigns/list", { teamId })
+      .then((list) => setCampaignOptions((list ?? []).filter((c) => c.sentAt || c.status === "SENDING")))
+      .catch(() => undefined);
+  }, [teamId]);
+
+  function selectCampaign(id: string | null) {
+    setSelectedCampaignId(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("campagna", id);
+    else url.searchParams.delete("campagna");
+    window.history.replaceState(null, "", url.toString());
+  }
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -314,7 +379,7 @@ export default function AnalyticsPage() {
               </p>
             )}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className={`flex flex-wrap items-center gap-2 ${selectedCampaignId ? "hidden" : ""}`}>
             <div className="flex gap-1 rounded border bg-white p-0.5">
               {RANGES.map((r) => (
                 <button
@@ -345,6 +410,16 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
+        <CampaignPicker
+          campaigns={campaignOptions}
+          value={selectedCampaignId}
+          onChange={selectCampaign}
+        />
+
+        {selectedCampaignId ? (
+          <CampaignReportView teamId={teamId} campaignId={selectedCampaignId} />
+        ) : (
+        <>
         {overview && (
           <>
             <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -457,8 +532,8 @@ export default function AnalyticsPage() {
         <section>
           <h2 className="mb-1 text-sm font-semibold">Performance per campagna</h2>
           <p className="mb-3 text-xs text-gray-500">
-            Clicca sul nome di una campagna per vedere, persona per persona, chi l&apos;ha ricevuta, letta e chi
-            ha risposto. Anche i numeri sono cliccabili e aprono gli eventi che li compongono.
+            Clicca sul nome di una campagna per il suo rapporto completo (andamento, tempi, risposte, persona per
+            persona). Anche i numeri sono cliccabili e aprono gli eventi che li compongono.
           </p>
           <div className="overflow-x-auto rounded border bg-white">
             <table className="w-full text-left text-sm">
@@ -480,8 +555,11 @@ export default function AnalyticsPage() {
                   <tr key={row.campaignId} className="border-t">
                     <td className="px-3 py-2">
                       <button
-                        onClick={() => openRecipients(row)}
-                        className="font-medium underline decoration-dotted underline-offset-2 hover:text-brand-dark"
+                        onClick={() => {
+                          selectCampaign(row.campaignId);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        className="text-left font-medium underline decoration-dotted underline-offset-2 hover:text-brand-dark"
                       >
                         {row.name}
                       </button>
@@ -614,8 +692,166 @@ export default function AnalyticsPage() {
           </section>
         )}
 
+        </>
+        )}
         {error && <p className="text-sm text-red-600">{error}</p>}
       </main>
+    </div>
+  );
+}
+
+function CampaignPicker({
+  campaigns,
+  value,
+  onChange,
+}: {
+  campaigns: CampaignOption[];
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded border bg-white px-3 py-2 text-sm">
+      <span className="text-gray-600">Mostra:</span>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value || null)}
+        className="min-w-[16rem] rounded border px-2 py-1"
+      >
+        <option value="">Tutte le campagne (totale messaggi)</option>
+        {campaigns.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+            {c.sentAt ? ` — ${new Date(c.sentAt).toLocaleDateString("it-IT")}` : ""}
+          </option>
+        ))}
+      </select>
+      {value && (
+        <button onClick={() => onChange(null)} className="text-xs text-gray-500 underline">
+          torna al totale
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Rapporto di una singola campagna: si aggiorna da solo come il resto della
+// pagina, perché letture e risposte continuano ad arrivare nelle ore dopo l'invio.
+function CampaignReportView({ teamId, campaignId }: { teamId: string | null; campaignId: string }) {
+  const [report, setReport] = useState<CampaignReport | null>(null);
+  const [recipients, setRecipients] = useState<CampaignRecipient[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!teamId) return;
+    try {
+      const [r, rows] = await Promise.all([
+        callTool<CampaignReport>("/analytics/campaign-report", { teamId, campaignId }),
+        callTool<CampaignRecipient[]>("/analytics/campaign-recipients", { teamId, campaignId }),
+      ]);
+      setReport(r);
+      setRecipients(rows ?? []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rapporto della campagna non disponibile");
+    }
+  }, [teamId, campaignId]);
+
+  useEffect(() => {
+    setReport(null);
+    setRecipients(null);
+    load();
+    const interval = setInterval(load, REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [load]);
+
+  if (error) return <p className="text-sm text-red-600">{error}</p>;
+  if (!report) return <p className="text-sm text-gray-400">Caricamento rapporto…</p>;
+
+  const timeline = report.timeline.map((t) => ({ ...t, date: String(t.hour) }));
+
+  return (
+    <div className="space-y-6">
+      <section className="rounded border bg-white p-4">
+        <h2 className="text-base font-semibold">{report.name}</h2>
+        <p className="text-xs text-gray-500">
+          {report.sentAt ? `Inviata il ${new Date(report.sentAt).toLocaleString("it-IT")}` : "Non ancora inviata"} ·
+          template {report.templateName} · destinatari: {report.segmentName} ({report.recipients})
+        </p>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile
+          label="Consegnati"
+          value={`${report.deliveryRate}%`}
+          hint={`${report.delivered} su ${report.sent}${report.pending ? ` · ${report.pending} in attesa` : ""}`}
+        />
+        <StatTile label="Letti" value={`${report.readRate}%`} hint={`${report.read} su ${report.delivered} consegnati`} />
+        <StatTile
+          label="Risposte"
+          value={`${report.replyRate}%`}
+          hint={`${report.replied} ${report.replied === 1 ? "persona" : "persone"}, entro 7 giorni`}
+        />
+        <StatTile
+          label="Costo"
+          value={`€${report.costTotal.toFixed(2)}`}
+          hint={report.costPerReply !== null ? `€${report.costPerReply.toFixed(2)} per risposta` : "nessuna risposta"}
+        />
+        <StatTile label="Tempo medio di lettura" value={formatDuration(report.medianMinutesToRead)} hint="dall'invio (mediana)" />
+        <StatTile label="Tempo medio di risposta" value={formatDuration(report.medianMinutesToReply)} hint="dall'invio (mediana)" />
+        <StatTile label="Click sui link" value={String(report.clicked)} hint={`${report.clickRate}% dei consegnati`} />
+        <StatTile label="Non consegnati" value={String(report.failed)} hint={report.failed ? "motivi qui sotto" : "nessuno"} />
+      </section>
+
+      <section className="rounded border bg-white p-4">
+        <h2 className="mb-1 text-sm font-semibold">Andamento dopo l&apos;invio</h2>
+        <p className="mb-3 text-xs text-gray-500">
+          Quanti messaggi risultano consegnati, letti e con risposta a ogni ora dall&apos;invio (prime 72 ore).
+        </p>
+        <TimeSeriesChart
+          data={timeline}
+          series={[
+            { key: "delivered", label: "Consegnati", color: SERIES_COLORS.delivered },
+            { key: "read", label: "Letti", color: SERIES_COLORS.read },
+            { key: "replied", label: "Risposte", color: SERIES_COLORS.clicked },
+          ]}
+          formatAxis={(h) => `${h}h`}
+          formatTooltip={(h) => (h === "0" ? "All'invio" : `Dopo ${h} ${h === "1" ? "ora" : "ore"}`)}
+          ariaLabel="Andamento della campagna nelle ore dopo l'invio"
+        />
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <section className="rounded border bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold">Imbuto della campagna</h2>
+          <FunnelChart
+            stages={[
+              { label: "Inviati", value: report.sent, color: SERIES_COLORS.delivered },
+              { label: "Consegnati", value: report.delivered, color: SERIES_COLORS.delivered },
+              { label: "Letti", value: report.read, color: SERIES_COLORS.read },
+              { label: "Hanno risposto", value: report.replied, color: SERIES_COLORS.clicked },
+            ]}
+          />
+        </section>
+        <section className="rounded border bg-white p-4">
+          <h2 className="mb-3 text-sm font-semibold">Perché alcuni non sono stati consegnati</h2>
+          {report.failureReasons.length === 0 ? (
+            <p className="text-sm text-gray-400">Nessun messaggio fallito.</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {report.failureReasons.map((f) => (
+                <li key={f.reason} className="flex justify-between gap-3 border-b py-1 last:border-0">
+                  <span>{f.reason}</span>
+                  <span className="font-medium" style={{ color: STATUS_CRITICAL }}>
+                    {f.count}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+
+      {recipients && <RecipientsPanel campaign={report.name} rows={recipients} />}
     </div>
   );
 }
@@ -627,7 +863,7 @@ function RecipientsPanel({
 }: {
   campaign: string;
   rows: CampaignRecipient[];
-  onClose: () => void;
+  onClose?: () => void;
 }) {
   const [filter, setFilter] = useState<"all" | "read" | "unread" | "replied" | "failed">("all");
   const fmt = (iso: string | null) =>
@@ -658,9 +894,11 @@ function RecipientsPanel({
     <section className="rounded border bg-white p-4">
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-sm font-semibold">Destinatari — {campaign}</h2>
-        <button onClick={onClose} className="text-xs text-gray-500 underline">
-          chiudi
-        </button>
+        {onClose && (
+          <button onClick={onClose} className="text-xs text-gray-500 underline">
+            chiudi
+          </button>
+        )}
       </div>
       <p className="mb-3 text-xs text-gray-500">
         &quot;Letto&quot; compare solo se il cliente ha le spunte blu attive: chi le ha disattivate resta

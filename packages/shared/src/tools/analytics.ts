@@ -129,6 +129,50 @@ export const CampaignRecipientOutput = z.object({
 });
 export type CampaignRecipientOutput = z.infer<typeof CampaignRecipientOutput>;
 
+// Rapporto completo di una singola campagna, calcolato dai messaggi salvati:
+// vale anche per le campagne inviate prima che esistesse questa vista.
+export const CampaignReportInput = z.object({
+  teamId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+});
+export type CampaignReportInput = z.infer<typeof CampaignReportInput>;
+
+export const CampaignReportOutput = z.object({
+  campaignId: z.string().uuid(),
+  name: z.string(),
+  status: z.string(),
+  templateName: z.string(),
+  segmentName: z.string(),
+  sentAt: z.string().datetime().nullable(),
+  recipients: z.number().int(),
+  sent: z.number().int(),
+  delivered: z.number().int(),
+  read: z.number().int(),
+  replied: z.number().int(),
+  clicked: z.number().int(),
+  failed: z.number().int(),
+  pending: z.number().int(), // inviati ma non ancora consegnati
+  deliveryRate: z.number(),
+  readRate: z.number(),
+  replyRate: z.number(),
+  clickRate: z.number(),
+  costTotal: z.number(),
+  costPerReply: z.number().nullable(),
+  medianMinutesToRead: z.number().nullable(),
+  medianMinutesToReply: z.number().nullable(),
+  // Andamento cumulativo nelle ore successive all'invio.
+  timeline: z.array(
+    z.object({
+      hour: z.number().int(), // ore dall'invio
+      delivered: z.number().int(),
+      read: z.number().int(),
+      replied: z.number().int(),
+    }),
+  ),
+  failureReasons: z.array(z.object({ reason: z.string(), count: z.number().int() })),
+});
+export type CampaignReportOutput = z.infer<typeof CampaignReportOutput>;
+
 // "A rischio" = un contatto che ha già avuto almeno una conversazione reale
 // (non un contatto appena importato e mai contattato) ma che non dà segnali
 // di attività (risposte, visite) da più del periodo scelto.
@@ -161,5 +205,6 @@ export const ANALYTICS_TOOLS = {
     input: CampaignRecipientsInput,
     output: z.array(CampaignRecipientOutput),
   },
+  "analytics.campaignReport": { input: CampaignReportInput, output: CampaignReportOutput },
   "analytics.atRiskCustomers": { input: AtRiskCustomersInput, output: z.array(AtRiskCustomerOutput) },
 } as const;

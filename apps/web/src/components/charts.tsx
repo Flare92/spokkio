@@ -24,8 +24,11 @@ export interface TimePoint {
   failed: number;
 }
 
-interface SeriesDef {
-  key: keyof Omit<TimePoint, "date">;
+// Chiavi numeriche di un punto del grafico (tutto tranne l'etichetta "date").
+type NumericKey<T> = { [K in keyof T]: T[K] extends number ? K : never }[keyof T] & string;
+
+interface SeriesDef<T> {
+  key: NumericKey<T>;
   label: string;
   color: string;
 }
@@ -33,7 +36,22 @@ interface SeriesDef {
 // Grafico a linee con crosshair e tooltip: una serie temporale senza hover
 // costringe a leggere i valori "a occhio" dall'asse, che è esattamente ciò
 // che rende inutilizzabile una dashboard analitica.
-export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: SeriesDef[] }) {
+// "date" è l'etichetta del punto: di default un giorno ISO, ma il grafico
+// accetta qualsiasi asse (es. ore dall'invio) con formattatori dedicati.
+export function TimeSeriesChart<T extends { date: string }>({
+  data,
+  series,
+  formatAxis = formatDayLabel,
+  formatTooltip = formatFullDate,
+  ariaLabel = "Andamento giornaliero dei messaggi",
+}: {
+  data: T[];
+  series: SeriesDef<T>[];
+  formatAxis?: (label: string) => string;
+  formatTooltip?: (label: string) => string;
+  ariaLabel?: string;
+}) {
+  const value = (point: T, key: NumericKey<T>) => Number(point[key]);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
 
   const width = 760;
@@ -43,7 +61,7 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
   const plotHeight = height - padding.top - padding.bottom;
 
   const maxValue = useMemo(() => {
-    const values = data.flatMap((d) => series.map((s) => d[s.key]));
+    const values = data.flatMap((d) => series.map((s) => Number(d[s.key])));
     return Math.max(1, ...values);
   }, [data, series]);
 
@@ -62,7 +80,7 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
           viewBox={`0 0 ${width} ${height}`}
           className="w-full"
           role="img"
-          aria-label="Andamento giornaliero dei messaggi"
+          aria-label={ariaLabel}
           onMouseLeave={() => setHoverIndex(null)}
           onMouseMove={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
@@ -98,7 +116,7 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
                 fontSize={11}
                 fill={TEXT_MUTED}
               >
-                {formatDayLabel(point.date)}
+                {formatAxis(point.date)}
               </text>
             ) : null,
           )}
@@ -122,7 +140,7 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
               strokeWidth={2}
               strokeLinejoin="round"
               strokeLinecap="round"
-              points={data.map((d, i) => `${x(i)},${y(d[s.key])}`).join(" ")}
+              points={data.map((d, i) => `${x(i)},${y(value(d, s.key))}`).join(" ")}
             />
           ))}
 
@@ -131,7 +149,7 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
               <circle
                 key={s.key}
                 cx={x(hoverIndex)}
-                cy={y(data[hoverIndex][s.key])}
+                cy={y(value(data[hoverIndex], s.key))}
                 r={4}
                 fill={s.color}
                 stroke="#ffffff"
@@ -145,12 +163,12 @@ export function TimeSeriesChart({ data, series }: { data: TimePoint[]; series: S
             className="pointer-events-none absolute top-2 rounded border bg-white px-3 py-2 text-xs shadow-sm"
             style={{ left: `${(x(hoverIndex) / width) * 100}%`, transform: "translateX(-50%)" }}
           >
-            <div className="mb-1 font-medium">{formatFullDate(data[hoverIndex].date)}</div>
+            <div className="mb-1 font-medium">{formatTooltip(data[hoverIndex].date)}</div>
             {series.map((s) => (
               <div key={s.key} className="flex items-center gap-2">
                 <span className="inline-block h-2 w-2 rounded-full" style={{ background: s.color }} />
                 <span className="text-gray-600">{s.label}</span>
-                <span className="ml-auto font-medium">{data[hoverIndex][s.key]}</span>
+                <span className="ml-auto font-medium">{value(data[hoverIndex], s.key)}</span>
               </div>
             ))}
           </div>

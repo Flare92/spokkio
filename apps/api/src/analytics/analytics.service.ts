@@ -12,6 +12,8 @@ import type {
   AtRiskCustomerOutput,
   CampaignRecipientsInput,
   CampaignRecipientOutput,
+  CampaignReportInput,
+  CampaignReportOutput,
   MessageCategory,
 } from "@spokkio/shared";
 import { MessageCategoryValues } from "@spokkio/shared";
@@ -25,6 +27,17 @@ import {
 const DELIVERED_STATUSES = ["DELIVERED", "READ"];
 // Una risposta conta per una campagna se arriva entro questi giorni dall'invio.
 const REPLY_WINDOW_DAYS = 7;
+// L'andamento di una campagna si mostra per le prime 72 ore dall'invio:
+// dopo, le curve sono praticamente piatte.
+const TIMELINE_HOURS = 72;
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const value = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  return Math.round(value);
+}
 
 @Injectable()
 export class AnalyticsService {
@@ -244,6 +257,106 @@ export class AnalyticsService {
         costTotal: Number((billable * ratePerConversation).toFixed(2)),
       };
     });
+  }
+
+  // Tool: analytics.campaignReport
+  async campaignReport(input: CampaignReportInput): Promise<CampaignReportOutput> {
+    const campaign = await this.prisma.campaign.findFirst({
+      where: { id: input.campaignId, teamId: input.teamId },
+      include: {
+        template: { select: { name: true, category: true } },
+        segment: { select: { name: true, _count: { select: { contacts: true } } } },
+      },
+    });
+    if (!campaign) throw new NotFoundException("Campaign not found");
+
+    const messages = await this.prisma.message.findMany({
+      where: { campaignId: campaign.id, direction: "OUTBOUND" },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        deliveredAt: true,
+        readAt: true,
+        failedReason: true,
+        conversation: { select: { contactId: true } },
+      },
+    });
+    const [replies, clickedCount] = await Promise.all([
+      this.findReplies(messages.map((m) => ({ id: m.id, contactId: m.conversation.contactId, createdAt: m.createdAt }))),
+      this.prisma.attributionEvent.count({ where: { kind: "clicked", message: { campaignId: campaign.id } } }),
+    ]);
+
+    const sent = messages.filter((m) => m.status !== "QUEUED").length;
+    const delivered = messages.filter((m) => DELIVERED_STATUSES.includes(m.status)).length;
+    const read = messages.filter((m) => m.status === "READ").length;
+    const failed = messages.filter((m) => m.status === "FAILED").length;
+    const replied = messages.filter((m) => replies.has(m.id)).length;
+
+    const billable = messages.filter((m) => m.status !== "QUEUED" && m.status !== "FAILED").length;
+    const costTotal = Number(
+      (
+        billable *
+        (META_CONVERSATION_RATE_EUR_IT[campaign.template.category as MessageCategory] + PLATFORM_MARKUP_EUR)
+      ).toFixed(2),
+    );
+
+    // Tempi misurati da quando il messaggio è partito; un "letto" senza
+    // "consegnato" registrato conta comunque come consegnato (WhatsApp
+    // consegna sempre prima di mostrare la lettura).
+    const minutes = (from: Date, to: Date) => (to.getTime() - from.getTime()) / 60000;
+    const readDelays = messages.filter((m) => m.readAt).map((m) => minutes(m.createdAt, m.readAt!));
+    const replyDelays = messages
+      .filter((m) => replies.has(m.id))
+      .map((m) => minutes(m.createdAt, replies.get(m.id)!.createdAt));
+
+    const start = campaign.sentAt ?? (messages.length ? new Date(Math.min(...messages.map((m) => m.createdAt.getTime()))) : null);
+    const hours = start ? Math.min(TIMELINE_HOURS, Math.max(1, Math.ceil(minutes(start, new Date()) / 60))) : 0;
+    const timeline = Array.from({ length: start ? hours + 1 : 0 }, (_, hour) => {
+      const until = start!.getTime() + hour * 3600000;
+      const at = (d: Date | null | undefined) => (d ? d.getTime() <= until : false);
+      return {
+        hour,
+        delivered: messages.filter((m) => at(m.deliveredAt) || (!m.deliveredAt && at(m.readAt))).length,
+        read: messages.filter((m) => at(m.readAt)).length,
+        replied: messages.filter((m) => at(replies.get(m.id)?.createdAt)).length,
+      };
+    });
+
+    const reasons = new Map<string, number>();
+    for (const m of messages.filter((m) => m.status === "FAILED")) {
+      const reason = m.failedReason ?? "Motivo non indicato da Meta";
+      reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+    }
+
+    return {
+      campaignId: campaign.id,
+      name: campaign.name,
+      status: campaign.status,
+      templateName: campaign.template.name,
+      segmentName: campaign.segment.name,
+      sentAt: start ? start.toISOString() : null,
+      recipients: messages.length || campaign.segment._count.contacts,
+      sent,
+      delivered,
+      read,
+      replied,
+      clicked: clickedCount,
+      failed,
+      pending: messages.filter((m) => m.status === "SENT").length,
+      deliveryRate: rate(delivered, sent),
+      readRate: rate(read, delivered),
+      replyRate: rate(replied, delivered),
+      clickRate: rate(clickedCount, delivered),
+      costTotal,
+      costPerReply: replied > 0 ? Number((costTotal / replied).toFixed(2)) : null,
+      medianMinutesToRead: median(readDelays),
+      medianMinutesToReply: median(replyDelays),
+      timeline,
+      failureReasons: [...reasons.entries()]
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count),
+    };
   }
 
   // Tool: analytics.campaignRecipients
