@@ -3,6 +3,17 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Nav } from "@/components/nav";
 import { callTool, decodeTeamId, loadImageDataUrl, uploadImage } from "@/lib/api";
+import { explainRejection, findTemplateProblems } from "@spokkio/shared";
+
+// Stessa normalizzazione dell'API: gli avvisi vanno calcolati sul nome che
+// verrà davvero salvato e mandato a Meta.
+function normalizeTemplateName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
+}
 
 interface SegmentOutput {
   id: string;
@@ -1198,8 +1209,14 @@ function StatusBadge({ status }: { status: string }) {
     SENDING: "bg-amber-50 text-amber-700",
     SENT: "bg-green-50 text-green-700",
     FAILED: "bg-red-50 text-red-700",
+    PENDING_REVIEW: "bg-blue-50 text-blue-700",
+    APPROVED: "bg-green-50 text-green-700",
+    REJECTED: "bg-red-50 text-red-700",
   };
   const labels: Record<string, string> = {
+    PENDING_REVIEW: "in revisione",
+    APPROVED: "approvato",
+    REJECTED: "rifiutato",
     DRAFT: "bozza",
     SCHEDULED: "programmata",
     SENDING: "in invio",
@@ -1223,6 +1240,9 @@ function TemplatesSection({
   onChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Template aperto nel modulo per correggerlo (null = nuovo template).
+  const [editing, setEditing] = useState<TemplateOutput | null>(null);
+  const [keepImage, setKeepImage] = useState(true);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [category, setCategory] = useState("MARKETING");
@@ -1240,23 +1260,69 @@ function TemplatesSection({
     setImagePreview(file ? URL.createObjectURL(file) : null);
   }
 
+  const problems = body || name ? findTemplateProblems({ name: normalizeTemplateName(name), bodyText: body }) : [];
+
+  function openForm(template: TemplateOutput | null) {
+    setEditing(template);
+    setName(template?.name ?? "");
+    setBody(template?.bodyText ?? "");
+    setCategory(template?.category ?? "MARKETING");
+    setLanguage(template?.language ?? "it");
+    setKeepImage(true);
+    pickImage(null);
+    setError(null);
+    setOpen(true);
+  }
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
     if (!teamId) return;
     setError(null);
     setCreating(true);
     try {
-      const headerImageId = imageFile ? (await uploadImage(teamId, imageFile)).id : undefined;
-      await callTool("/templates", { teamId, name, category, language, bodyText: body, variables: [], headerImageId });
+      const uploadedId = imageFile ? (await uploadImage(teamId, imageFile)).id : undefined;
+      if (editing) {
+        await callTool("/templates/update", {
+          teamId,
+          templateId: editing.id,
+          name,
+          category,
+          language,
+          bodyText: body,
+          headerImageId: uploadedId ?? (keepImage ? undefined : null),
+        });
+      } else {
+        await callTool("/templates", {
+          teamId,
+          name,
+          category,
+          language,
+          bodyText: body,
+          variables: [],
+          headerImageId: uploadedId,
+        });
+      }
       setName("");
       setBody("");
       pickImage(null);
+      setEditing(null);
       setOpen(false);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creazione template fallita");
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function removeTemplate(template: TemplateOutput) {
+    if (!confirm(`Eliminare il template "${template.name}"?${template.metaTemplateId ? " Verrà eliminato anche su Meta." : ""}`)) return;
+    setError(null);
+    try {
+      await callTool("/templates/delete", { teamId, templateId: template.id });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Eliminazione template fallita");
     }
   }
 
@@ -1290,7 +1356,10 @@ function TemplatesSection({
     <section>
       <div className="mb-2 flex items-center justify-between">
         <h2 className="text-lg font-semibold">Template</h2>
-        <button onClick={() => setOpen((v) => !v)} className="text-sm text-brand-dark underline">
+        <button
+          onClick={() => (open ? (setOpen(false), setEditing(null)) : openForm(null))}
+          className="text-sm text-brand-dark underline"
+        >
           {open ? "chiudi" : "nuovo template"}
         </button>
       </div>
@@ -1302,6 +1371,12 @@ function TemplatesSection({
 
       {open && (
         <form onSubmit={create} className="mb-3 space-y-3 rounded border bg-white p-4">
+          {editing && (
+            <p className="rounded bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              Stai correggendo <strong>{editing.name}</strong>. Dopo aver salvato premi &quot;sottometti a Meta&quot;.
+              {editing.metaTemplateId && " Se cambi nome o lingua diventa un template nuovo per Meta."}
+            </p>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <input
               required
@@ -1333,6 +1408,19 @@ function TemplatesSection({
             placeholder="Ciao {{1}}, ti aspettiamo il {{2}}!"
             className="h-24 w-full rounded border px-3 py-2 text-sm"
           />
+          {name && normalizeTemplateName(name) !== name && (
+            <p className="text-xs text-gray-500">
+              Verrà salvato come <code className="rounded bg-gray-100 px-1">{normalizeTemplateName(name)}</code>
+            </p>
+          )}
+          {problems.length > 0 && (
+            <ul className="space-y-1 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <li className="font-medium">Meta probabilmente lo rifiuterebbe:</li>
+              {problems.map((p) => (
+                <li key={p}>• {p}</li>
+              ))}
+            </ul>
+          )}
           <div className="rounded border border-dashed p-3 text-sm">
             <span className="mb-1 block font-medium">Immagine (facoltativa)</span>
             <p className="mb-2 text-xs text-gray-500">
@@ -1340,6 +1428,12 @@ function TemplatesSection({
               l&apos;approvazione: quando crei una campagna puoi usare la stessa o caricarne un&apos;altra (es. una
               foto diversa per ogni offerta) senza dover far riapprovare il template.
             </p>
+            {editing?.headerImageId && !imageFile && (
+              <label className="mb-2 flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={keepImage} onChange={(e) => setKeepImage(e.target.checked)} />
+                tieni l&apos;immagine attuale
+              </label>
+            )}
             <input
               type="file"
               accept="image/jpeg,image/png"
@@ -1361,7 +1455,7 @@ function TemplatesSection({
             disabled={creating}
             className="rounded bg-brand-dark px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            {creating ? "Creazione…" : "Crea template"}
+            {creating ? "Salvataggio…" : editing ? "Salva correzioni" : "Crea template"}
           </button>
         </form>
       )}
@@ -1378,16 +1472,24 @@ function TemplatesSection({
               </span>
               <span className="flex items-center gap-2 text-xs">
                 <StatusBadge status={t.status} />
-                {!t.metaTemplateId && (
+                {(t.status === "DRAFT" || t.status === "REJECTED" || (!t.metaTemplateId && t.status !== "APPROVED")) && (
+                  <button
+                    onClick={() => openForm(t)}
+                    className="rounded border px-2 py-0.5 text-gray-600 hover:bg-gray-50"
+                  >
+                    modifica
+                  </button>
+                )}
+                {(!t.metaTemplateId || t.status === "REJECTED") && t.status !== "APPROVED" && (
                   <button
                     onClick={() => submitToMeta(t.id)}
                     disabled={submittingId === t.id}
                     className="rounded border px-2 py-0.5 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
                   >
-                    {submittingId === t.id ? "invio…" : "sottometti a Meta"}
+                    {submittingId === t.id ? "invio…" : t.status === "REJECTED" ? "risottometti a Meta" : "sottometti a Meta"}
                   </button>
                 )}
-                {t.metaTemplateId && t.status !== "APPROVED" && (
+                {t.metaTemplateId && t.status === "PENDING_REVIEW" && (
                   <button
                     onClick={() => syncStatus(t.id)}
                     disabled={submittingId === t.id}
@@ -1396,10 +1498,32 @@ function TemplatesSection({
                     {submittingId === t.id ? "controllo…" : "aggiorna stato da Meta"}
                   </button>
                 )}
+                <button onClick={() => removeTemplate(t)} className="text-red-600 underline">
+                  elimina
+                </button>
               </span>
             </div>
-            {t.rejectionReason && <p className="mt-1 text-xs text-red-600">Rifiutato da Meta: {t.rejectionReason}</p>}
-            {t.submissionError && <p className="mt-1 text-xs text-red-600">Sottomissione fallita: {t.submissionError}</p>}
+            {t.status === "REJECTED" && (
+              <div className="mt-1 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
+                <p>
+                  <strong>Rifiutato da Meta</strong>
+                  {t.rejectionReason ? ` (motivo: ${t.rejectionReason})` : ""}.
+                </p>
+                <p className="mt-0.5">
+                  {explainRejection(t.rejectionReason) ??
+                    "Meta non ha indicato un motivo preciso: il dettaglio è in WhatsApp Manager → Modelli di messaggio."}
+                </p>
+                <p className="mt-0.5 text-red-700">Premi &quot;modifica&quot;, correggi e poi &quot;risottometti a Meta&quot;.</p>
+              </div>
+            )}
+            {t.submissionError && (
+              <div className="mt-1 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800">
+                <p>
+                  <strong>Non è stato inviato a Meta.</strong> {t.submissionError}
+                </p>
+                <p className="mt-0.5 text-red-700">Premi &quot;modifica&quot;, correggi e riprova.</p>
+              </div>
+            )}
             {t.metaTemplateId && t.status === "PENDING_REVIEW" && (
               <p className="mt-1 text-xs text-gray-400">In revisione su Meta — l&apos;esito arriva da solo se il webhook è collegato, altrimenti premi
                 &quot;aggiorna stato da Meta&quot;.</p>

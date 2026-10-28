@@ -46,9 +46,28 @@ export type SubmitTemplateInput = z.infer<typeof SubmitTemplateInput>;
 export const SyncTemplateStatusInput = z.object({ teamId: z.string().uuid(), templateId: z.string().uuid() });
 export type SyncTemplateStatusInput = z.infer<typeof SyncTemplateStatusInput>;
 
+// Modifica di un template non approvato (bozza, rifiutato o con
+// sottomissione fallita) per correggerlo e risottometterlo.
+export const UpdateTemplateInput = z.object({
+  teamId: z.string().uuid(),
+  templateId: z.string().uuid(),
+  name: z.string().min(1),
+  category: z.enum(MessageCategoryValues),
+  language: z.string().min(2).max(10),
+  bodyText: z.string().min(1),
+  // undefined = tieni l'immagine attuale, null = toglila.
+  headerImageId: z.string().uuid().nullable().optional(),
+});
+export type UpdateTemplateInput = z.infer<typeof UpdateTemplateInput>;
+
+export const DeleteTemplateInput = z.object({ teamId: z.string().uuid(), templateId: z.string().uuid() });
+export type DeleteTemplateInput = z.infer<typeof DeleteTemplateInput>;
+
 export const TEMPLATES_TOOLS = {
   "templates.create": { input: CreateTemplateInput, output: TemplateOutput },
   "templates.list": { input: ListTemplatesInput, output: z.array(TemplateOutput) },
   "templates.submit": { input: SubmitTemplateInput, output: TemplateOutput },
   "templates.syncStatus": { input: SyncTemplateStatusInput, output: TemplateOutput },
+  "templates.update": { input: UpdateTemplateInput, output: TemplateOutput },
+  "templates.delete": { input: DeleteTemplateInput, output: z.object({ deleted: z.literal(true) }) },
 } as const;

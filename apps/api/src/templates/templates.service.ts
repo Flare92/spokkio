@@ -5,7 +5,10 @@ import type {
   ListTemplatesInput,
   SubmitTemplateInput,
   SyncTemplateStatusInput,
+  UpdateTemplateInput,
+  DeleteTemplateInput,
 } from "@spokkio/shared";
+import { findTemplateProblems } from "@spokkio/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { WhatsAppService } from "../whatsapp/whatsapp.service";
 import { MediaService } from "../media/media.service";
@@ -19,7 +22,7 @@ export class TemplatesService {
   ) {}
 
   // Tool: templates.create
-  // Crea solo il record locale in PENDING_REVIEW; la sottomissione reale a
+  // Crea solo il record locale come bozza; la sottomissione reale a
   // Meta è un passo esplicito separato (templates.submit), così l'utente può
   // ancora correggere testo/categoria prima di consumare un tentativo di
   // revisione.
@@ -34,7 +37,7 @@ export class TemplatesService {
         bodyText: input.bodyText,
         variables: input.variables,
         headerImageId: input.headerImageId ?? null,
-        status: "PENDING_REVIEW",
+        status: "DRAFT",
       },
     });
 
@@ -47,6 +50,21 @@ export class TemplatesService {
       where: { id: input.templateId, teamId: input.teamId },
     });
     if (!template) throw new NotFoundException("Template not found");
+
+    if (template.status === "APPROVED" || (template.status === "PENDING_REVIEW" && template.metaTemplateId)) {
+      throw new BadRequestException("Questo template è già approvato o in revisione su Meta");
+    }
+
+    // Gli errori di formato più comuni si controllano qui: niente tentativo
+    // sprecato e un messaggio in italiano al posto di quello generico di Meta.
+    const problems = findTemplateProblems({ name: template.name, bodyText: template.bodyText });
+    if (problems.length > 0) {
+      const failed = await this.prisma.template.update({
+        where: { id: template.id },
+        data: { submissionError: `Da correggere prima dell'invio: ${problems.join(" ")}` },
+      });
+      return this.toOutput(failed);
+    }
 
     const connection = await this.prisma.whatsAppConnection.findUnique({ where: { teamId: input.teamId } });
     if (!connection) {
@@ -79,13 +97,15 @@ export class TemplatesService {
       language: template.language,
       bodyText: template.bodyText,
       headerImageHandle,
+      // Un template rifiutato si corregge e si rimanda con lo stesso id Meta.
+      existingMetaTemplateId: template.status === "REJECTED" ? template.metaTemplateId ?? undefined : undefined,
     });
 
     const updated = await this.prisma.template.update({
       where: { id: template.id },
       data:
         "metaTemplateId" in result
-          ? { metaTemplateId: result.metaTemplateId, submissionError: null }
+          ? { metaTemplateId: result.metaTemplateId, submissionError: null, rejectionReason: null, status: "PENDING_REVIEW" }
           : { submissionError: result.error },
     });
 
@@ -121,6 +141,70 @@ export class TemplatesService {
       },
     });
     return this.toOutput(updated);
+  }
+
+  // Tool: templates.update — solo per template non approvati e non in
+  // revisione: dopo la modifica va risottomesso. Cambiare il nome di un
+  // template già creato su Meta lo trasforma in un template nuovo (Meta non
+  // permette di rinominare), quindi si perde il collegamento con il vecchio.
+  async updateTemplate(input: UpdateTemplateInput): Promise<TemplateOutput> {
+    const template = await this.prisma.template.findFirst({
+      where: { id: input.templateId, teamId: input.teamId },
+    });
+    if (!template) throw new NotFoundException("Template not found");
+    if (template.status === "APPROVED") {
+      throw new BadRequestException("Un template approvato non si modifica: duplicalo con un nome nuovo");
+    }
+    if (template.status === "PENDING_REVIEW" && template.metaTemplateId) {
+      throw new BadRequestException("Il template è in revisione su Meta: aspetta l'esito prima di modificarlo");
+    }
+    if (input.headerImageId) await this.media.assertBelongsToTeam(input.teamId, input.headerImageId);
+
+    const name = normalizeTemplateName(input.name);
+    const renamedOnMeta = template.metaTemplateId !== null && (name !== template.name || input.language !== template.language);
+
+    const updated = await this.prisma.template.update({
+      where: { id: template.id },
+      data: {
+        name,
+        category: input.category,
+        language: input.language,
+        bodyText: input.bodyText,
+        headerImageId: input.headerImageId === undefined ? template.headerImageId : input.headerImageId,
+        submissionError: null,
+        ...(renamedOnMeta ? { metaTemplateId: null, rejectionReason: null, status: "DRAFT" as const } : {}),
+      },
+    });
+    return this.toOutput(updated);
+  }
+
+  // Tool: templates.delete — non se una campagna o un'automazione lo usa.
+  async deleteTemplate(input: DeleteTemplateInput): Promise<{ deleted: true }> {
+    const template = await this.prisma.template.findFirst({
+      where: { id: input.templateId, teamId: input.teamId },
+      include: { _count: { select: { campaigns: true, variantBCampaigns: true, automations: true } } },
+    });
+    if (!template) throw new NotFoundException("Template not found");
+    const uses = template._count.campaigns + template._count.variantBCampaigns + template._count.automations;
+    if (uses > 0) {
+      throw new BadRequestException(
+        `Il template è usato da ${uses} campagne o automazioni: eliminale o cambia template prima di cancellarlo`,
+      );
+    }
+
+    if (template.metaTemplateId) {
+      const connection = await this.prisma.whatsAppConnection.findUnique({ where: { teamId: input.teamId } });
+      if (connection) {
+        await this.whatsapp.deleteTemplate({
+          wabaId: connection.wabaId,
+          accessToken: connection.accessTokenEncrypted,
+          name: template.name,
+          metaTemplateId: template.metaTemplateId,
+        });
+      }
+    }
+    await this.prisma.template.delete({ where: { id: template.id } });
+    return { deleted: true };
   }
 
   // Tool: templates.list

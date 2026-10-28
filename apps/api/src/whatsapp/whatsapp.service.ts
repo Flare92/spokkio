@@ -50,6 +50,9 @@ export class WhatsAppService {
     // Handle dell'immagine di esempio (da uploadTemplateExampleImage): Meta
     // lo richiede per valutare un template con header immagine.
     headerImageHandle?: string;
+    // Template rifiutato già esistente su Meta: viene modificato e rimandato
+    // in revisione con lo stesso id (Meta non permette di cambiarne il nome).
+    existingMetaTemplateId?: string;
   }): Promise<{ metaTemplateId: string } | { error: string }> {
     const variableCount = new Set(
       Array.from(params.bodyText.matchAll(/\{\{(\d+)\}\}/g)).map((m) => Number(m[1])),
@@ -63,23 +66,27 @@ export class WhatsAppService {
     }
 
     try {
-      const response = await fetch(`${GRAPH_BASE_URL}/${params.wabaId}/message_templates`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${params.accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: params.name,
-          category: params.category,
-          language: params.language,
-          components: params.headerImageHandle
-            ? [{ type: "HEADER", format: "IMAGE", example: { header_handle: [params.headerImageHandle] } }, bodyComponent]
-            : [bodyComponent],
-        }),
-      });
+      const components = params.headerImageHandle
+        ? [{ type: "HEADER", format: "IMAGE", example: { header_handle: [params.headerImageHandle] } }, bodyComponent]
+        : [bodyComponent];
+      const editing = Boolean(params.existingMetaTemplateId);
+      const response = await fetch(
+        editing ? `${GRAPH_BASE_URL}/${params.existingMetaTemplateId}` : `${GRAPH_BASE_URL}/${params.wabaId}/message_templates`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${params.accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(
+            editing
+              ? { category: params.category, components }
+              : { name: params.name, category: params.category, language: params.language, components },
+          ),
+        },
+      );
 
-      const json = (await response.json()) as { id?: string; error?: { message: string } };
-      if (!response.ok || json.error || !json.id) {
-        return { error: json.error?.message ?? `HTTP ${response.status}` };
-      }
+      const json = (await response.json()) as { id?: string; success?: boolean; error?: MetaError };
+      if (!response.ok || json.error) return { error: describeMetaError(json.error, response.status) };
+      if (editing && json.success) return { metaTemplateId: params.existingMetaTemplateId! };
+      if (!json.id) return { error: `Risposta inattesa da Meta (HTTP ${response.status})` };
       return { metaTemplateId: json.id };
     } catch (err) {
       return { error: err instanceof Error ? err.message : "errore di rete" };
@@ -179,6 +186,19 @@ export class WhatsAppService {
       return { subscribed: false, error: created.error?.message ?? "Iscrizione al webhook non riuscita" };
     } catch (err) {
       return { subscribed: null, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  // Elimina un template anche su Meta, così non resta in WhatsApp Manager.
+  // Best effort: un errore qui non blocca l'eliminazione in Spokkio.
+  async deleteTemplate(params: { wabaId: string; accessToken: string; name: string; metaTemplateId: string }) {
+    try {
+      const url = `${GRAPH_BASE_URL}/${params.wabaId}/message_templates?hsm_id=${params.metaTemplateId}&name=${encodeURIComponent(params.name)}`;
+      const response = await fetch(url, { method: "DELETE", headers: { Authorization: `Bearer ${params.accessToken}` } });
+      const json = (await response.json()) as { success?: boolean; error?: MetaError };
+      return json.success ? { ok: true as const } : { error: describeMetaError(json.error, response.status) };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "errore di rete" };
     }
   }
 
@@ -346,6 +366,24 @@ export class WhatsAppService {
     }
     return events;
   }
+}
+
+interface MetaError {
+  message?: string;
+  code?: number;
+  error_subcode?: number;
+  error_user_title?: string;
+  error_user_msg?: string;
+}
+
+// Il campo "message" di Meta è spesso generico ("Invalid parameter"): la
+// spiegazione vera sta in error_user_title / error_user_msg.
+function describeMetaError(error: MetaError | undefined, status: number): string {
+  if (!error) return `HTTP ${status}`;
+  const parts = [error.error_user_title, error.error_user_msg].filter(Boolean);
+  const detail = parts.length ? parts.join(": ") : error.message ?? `HTTP ${status}`;
+  const code = error.error_subcode ?? error.code;
+  return code ? `${detail} (codice Meta ${code})` : detail;
 }
 
 function buildSendComponents(params: SendTemplateMessageParams) {

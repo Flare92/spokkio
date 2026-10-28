@@ -1,4 +1,5 @@
 export * from "./enums";
+export * from "./template-rules";
 export * from "./tools/contacts";
 export * from "./tools/campaigns";
 export * from "./tools/templates";
